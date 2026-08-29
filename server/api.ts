@@ -30,7 +30,8 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
   const path = url.pathname.replace(/\/+$/, "") || "/";
 
   if (path === "/api/market") {
-    json(res, { items: await getMarketNews(), fetchedAt: Date.now() });
+    const { items, pulls } = await getMarketNews();
+    json(res, { items, pulls, fetchedAt: Date.now() });
     return;
   }
   if (path === "/api/stock-news") {

@@ -27,6 +27,13 @@ export interface NewsItem {
   tone: Tone;
 }
 
+export interface SourcePull {
+  source: string;
+  fetchedAt: number;
+  count: number;
+  ok: boolean;
+}
+
 export interface Quote {
   symbol: string;
   price: number;

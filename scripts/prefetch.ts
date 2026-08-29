@@ -1,8 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { mergeNews, mergeQuotes, pruneNews } from "../src/archive";
+import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "../src/archive";
 import { defaultWatchlist, popularStocks } from "../src/catalog";
 import { getMarketNews, getQuotes, getStockNews } from "../src/feeds";
-import type { NewsItem, Quote } from "../src/types";
+import type { NewsItem, Quote, SourcePull } from "../src/types";
 
 const outDir = new URL("../public/data/", import.meta.url);
 const snapshotFile = new URL("../src/snapshot.json", import.meta.url);
@@ -30,6 +30,17 @@ async function readLiveQuotes(): Promise<Quote[]> {
   }
 }
 
+async function readLivePulls(): Promise<SourcePull[]> {
+  try {
+    const res = await fetch(`${LIVE}market.json`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { pulls?: SourcePull[] };
+    return data.pulls ?? [];
+  } catch {
+    return [];
+  }
+}
+
 async function writeJson(url: URL, body: unknown): Promise<void> {
   await writeFile(url, JSON.stringify(body));
 }
@@ -39,20 +50,22 @@ async function main(): Promise<void> {
     [...defaultWatchlist(), ...popularStocks()].map((s) => [s.id, s]),
   ).values()];
   console.log(`prefetch ${stocks.length} stocks`);
-  const [prevMarket, prevStocks, prevQuotes, market, stockNews, quotes] = await Promise.all([
+  const [prevMarket, prevStocks, prevQuotes, prevPulls, fresh, stockNews, quotes] = await Promise.all([
     readLiveNews("market.json"),
     readLiveNews("stocks.json"),
     readLiveQuotes(),
+    readLivePulls(),
     getMarketNews(),
     getStockNews(stocks, { light: true }),
     getQuotes(stocks.map((s) => s.yahoo)),
   ]);
   const fetchedAt = Date.now();
-  const marketMerged = mergeNews(prevMarket, market);
+  const marketMerged = mergeNews(prevMarket, fresh.items);
   const stocksMerged = mergeNews(prevStocks, stockNews);
   const quotesMerged = mergeQuotes(prevQuotes, quotes);
+  const pullsMerged = mergePulls(prevPulls, fresh.pulls);
   await mkdir(outDir, { recursive: true });
-  const marketBody = { items: marketMerged, fetchedAt };
+  const marketBody = { items: marketMerged, pulls: pullsMerged, fetchedAt };
   const stocksBody = { items: stocksMerged, fetchedAt };
   const quotesBody = { quotes: quotesMerged, fetchedAt };
   await writeJson(new URL("market.json", outDir), marketBody);
@@ -62,10 +75,12 @@ async function main(): Promise<void> {
     market: marketMerged,
     stocks: stocksMerged,
     quotes: quotesMerged,
+    pulls: pullsMerged,
     fetchedAt,
   });
-  console.log(`prev market=${prevMarket.length} + new=${market.length} -> ${marketMerged.length}`);
+  console.log(`prev market=${prevMarket.length} + new=${fresh.items.length} -> ${marketMerged.length}`);
   console.log(`prev stocks=${prevStocks.length} + new=${stockNews.length} -> ${stocksMerged.length}`);
+  console.log("pulls", pullsMerged.map((p) => `${p.source}:${p.ok ? p.count : "fail"}`).join(", "));
 }
 
 main().catch((err: unknown) => {

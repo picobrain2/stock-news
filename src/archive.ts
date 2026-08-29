@@ -1,4 +1,4 @@
-import type { NewsItem, Quote } from "./types";
+import type { NewsItem, Quote, SourcePull } from "./types";
 
 const KEY = "sihwang.archive.v1";
 const DAY_MS = 86_400_000;
@@ -7,11 +7,12 @@ export interface NewsArchive {
   market: NewsItem[];
   stocks: NewsItem[];
   quotes: Quote[];
+  pulls: SourcePull[];
   fetchedAt: number;
 }
 
 function emptyArchive(): NewsArchive {
-  return { market: [], stocks: [], quotes: [], fetchedAt: 0 };
+  return { market: [], stocks: [], quotes: [], pulls: [], fetchedAt: 0 };
 }
 
 function newsKey(item: NewsItem): string {
@@ -46,6 +47,13 @@ export function mergeQuotes(previous: Quote[], incoming: Quote[]): Quote[] {
   return [...map.values()];
 }
 
+export function mergePulls(previous: SourcePull[], incoming: SourcePull[]): SourcePull[] {
+  const map = new Map<string, SourcePull>();
+  for (const pull of previous) map.set(pull.source, pull);
+  for (const pull of incoming) map.set(pull.source, pull);
+  return [...map.values()].sort((a, b) => a.source.localeCompare(b.source, "ko"));
+}
+
 export function loadArchive(): NewsArchive {
   try {
     const parsed = JSON.parse(localStorage.getItem(KEY) ?? "") as NewsArchive;
@@ -54,6 +62,7 @@ export function loadArchive(): NewsArchive {
       market: pruneNews(parsed.market),
       stocks: pruneNews(parsed.stocks ?? []),
       quotes: Array.isArray(parsed.quotes) ? parsed.quotes : [],
+      pulls: Array.isArray(parsed.pulls) ? parsed.pulls : [],
       fetchedAt: parsed.fetchedAt ?? 0,
     };
   } catch {
@@ -66,6 +75,7 @@ export function saveArchive(archive: NewsArchive): void {
     market: pruneNews(archive.market),
     stocks: pruneNews(archive.stocks),
     quotes: archive.quotes,
+    pulls: archive.pulls ?? [],
     fetchedAt: archive.fetchedAt || Date.now(),
   };
   localStorage.setItem(KEY, JSON.stringify(next));

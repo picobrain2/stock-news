@@ -1,5 +1,5 @@
 import { classifyTone, inferRegion, isMarketRelevant, scoreImpact } from "./impact";
-import type { NewsItem, Quote, SearchHit } from "./types";
+import type { NewsItem, Quote, SearchHit, SourcePull } from "./types";
 
 const isBrowser = typeof window !== "undefined";
 
@@ -107,14 +107,72 @@ function firstUrl(block: string): string {
   return href?.[1] ?? "";
 }
 
+const HOST_LABEL: Record<string, string> = {
+  "v.daum.net": "다음",
+  "news.daum.net": "다음",
+  "n.news.naver.com": "네이버",
+  "news.naver.com": "네이버",
+  "hankyung.com": "한국경제",
+  "mk.co.kr": "매일경제",
+  "yna.co.kr": "연합뉴스",
+  "mt.co.kr": "머니투데이",
+  "chosun.com": "조선일보",
+  "biz.chosun.com": "조선비즈",
+  "donga.com": "동아일보",
+  "hani.co.kr": "한겨레",
+  "sbs.co.kr": "SBS",
+  "jtbc.co.kr": "JTBC",
+  "newsis.com": "뉴시스",
+  "sedaily.com": "서울경제",
+  "fnnews.com": "파이낸셜뉴스",
+  "edaily.co.kr": "이데일리",
+  "asiae.co.kr": "아시아경제",
+  "heraldcorp.com": "헤럴드경제",
+  "wowtv.co.kr": "한국경제TV",
+  "yonhapnewstv.co.kr": "연합뉴스TV",
+  "ytn.co.kr": "YTN",
+  "mbn.co.kr": "MBN",
+  "kbs.co.kr": "KBS",
+  "imbc.com": "MBC",
+  "joongang.co.kr": "중앙일보",
+  "joins.com": "중앙일보",
+  "khan.co.kr": "경향신문",
+  "hankookilbo.com": "한국일보",
+  "seoul.co.kr": "서울신문",
+  "kmib.co.kr": "국민일보",
+  "bizwatch.co.kr": "비즈워치",
+  "thebell.co.kr": "더벨",
+  "bloombergtv.co.kr": "블룸버그",
+  "bloomberg.com": "Bloomberg",
+  "reuters.com": "Reuters",
+  "wsj.com": "WSJ",
+  "ft.com": "FT",
+  "cnbc.com": "CNBC",
+  "bbc.com": "BBC",
+  "bbc.co.uk": "BBC",
+  "nytimes.com": "NYT",
+};
+
+function prettySource(name: string): string {
+  const trimmed = name.replace(/^www\./i, "").trim();
+  const key = trimmed.toLowerCase();
+  if (HOST_LABEL[key]) return HOST_LABEL[key];
+  const parts = key.split(".");
+  for (let i = 1; i < parts.length - 1; i++) {
+    const suffix = parts.slice(i).join(".");
+    if (HOST_LABEL[suffix]) return HOST_LABEL[suffix];
+  }
+  return trimmed;
+}
+
 function sourceOf(block: string, title: string, url: string): string {
   const src = tagText(block, "source");
-  if (src) return src;
+  if (src) return prettySource(src);
   const dash = title.match(/\s[-–—]\s([^-–—]{2,40})$/);
-  if (dash) return dash[1].trim();
+  if (dash) return prettySource(dash[1].trim());
   try {
     const host = new URL(url).hostname.replace(/^www\./, "");
-    return host;
+    return prettySource(host);
   } catch {
     return "";
   }
@@ -215,30 +273,69 @@ function mergeNews(groups: NewsItem[][]): NewsItem[] {
 }
 
 const MARKET_FEEDS: { source: string; url: string; requireImpact: boolean }[] = [
-  { source: "Google 뉴스", url: googleNews("when:1d (금리 OR 연준 OR FOMC OR 환율 OR 원달러 OR 유가 OR 관세 OR CPI)", "kr"), requireImpact: false },
-  { source: "Google 뉴스", url: googleNews("when:1d (코스피 OR 나스닥 OR 증시 OR 반도체 OR 실적 OR 한국은행)", "kr"), requireImpact: false },
-  { source: "Google News", url: googleNews('when:1d (Fed OR FOMC OR tariff OR CPI OR "stock market" OR Nasdaq OR earnings)', "us"), requireImpact: false },
-  { source: "Google 뉴스", url: "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtdHZHZ0pMVWlnQVAB?hl=ko&gl=KR&ceid=KR:ko", requireImpact: true },
-  { source: "한국경제", url: "https://www.hankyung.com/feed/finance", requireImpact: true },
-  { source: "연합뉴스", url: "https://www.yna.co.kr/rss/economy.xml", requireImpact: true },
+  { source: "구글 뉴스", url: googleNews("when:1d (금리 OR 연준 OR FOMC OR 환율 OR 원달러 OR 유가 OR 관세 OR CPI)", "kr"), requireImpact: false },
+  { source: "구글 뉴스", url: googleNews("when:1d (코스피 OR 나스닥 OR 증시 OR 반도체 OR 실적 OR 한국은행)", "kr"), requireImpact: false },
+  { source: "구글 뉴스", url: googleNews('when:1d (Fed OR FOMC OR tariff OR CPI OR "stock market" OR Nasdaq OR earnings)', "us"), requireImpact: false },
+  { source: "한국경제", url: "https://www.hankyung.com/feed/finance", requireImpact: false },
+  { source: "한국경제", url: "https://www.hankyung.com/feed/economy", requireImpact: false },
+  { source: "연합뉴스", url: "https://www.yna.co.kr/rss/economy.xml", requireImpact: false },
+  { source: "연합뉴스", url: "https://www.yna.co.kr/rss/market.xml", requireImpact: false },
+  { source: "머니투데이", url: "https://rss.mt.co.kr/mt_news.xml", requireImpact: false },
+  { source: "조선일보", url: "https://www.chosun.com/arc/outboundfeeds/rss/category/economy/?outputType=xml", requireImpact: false },
+  { source: "조선비즈", url: "https://biz.chosun.com/arc/outboundfeeds/rss/?outputType=xml", requireImpact: false },
+  { source: "동아일보", url: "https://rss.donga.com/economy.xml", requireImpact: false },
+  { source: "한겨레", url: "https://www.hani.co.kr/rss/economy", requireImpact: false },
+  { source: "뉴시스", url: "https://www.newsis.com/RSS/economy.xml", requireImpact: false },
+  { source: "SBS", url: "https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=02", requireImpact: false },
+  { source: "JTBC", url: "https://fs.jtbc.co.kr/RSS/economy.xml", requireImpact: false },
   { source: "CNBC", url: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664", requireImpact: true },
   { source: "BBC", url: "https://feeds.bbci.co.uk/news/business/rss.xml", requireImpact: true },
 ];
 
-export async function getMarketNews(): Promise<NewsItem[]> {
+function foldPulls(rows: SourcePull[]): SourcePull[] {
+  const map = new Map<string, SourcePull>();
+  for (const pull of rows) {
+    const cur = map.get(pull.source);
+    if (!cur) {
+      map.set(pull.source, { ...pull });
+      continue;
+    }
+    map.set(pull.source, {
+      source: pull.source,
+      fetchedAt: Math.max(cur.fetchedAt, pull.fetchedAt),
+      count: cur.count + pull.count,
+      ok: cur.ok || pull.ok,
+    });
+  }
+  return [...map.values()].sort((a, b) => a.source.localeCompare(b.source, "ko"));
+}
+
+export async function getMarketNews(): Promise<{ items: NewsItem[]; pulls: SourcePull[] }> {
   return cached("market", CACHE_MS, async () => {
-    const feeds = isBrowser ? MARKET_FEEDS.slice(0, 5) : MARKET_FEEDS;
+    const feeds = isBrowser ? MARKET_FEEDS.slice(0, 8) : MARKET_FEEDS;
+    const pulls: SourcePull[] = [];
     const groups = await settled(
       feeds.map(async (feed) => {
-        const items = await rss(feed.url, feed.source);
-        return feed.requireImpact
-          ? items.filter((n) => isMarketRelevant(n.title, n.snippet, n.impact))
-          : items;
+        const at = Date.now();
+        try {
+          const items = await rss(feed.url, feed.source);
+          const kept = feed.requireImpact
+            ? items.filter((n) => isMarketRelevant(n.title, n.snippet, n.impact))
+            : items;
+          pulls.push({ source: feed.source, fetchedAt: at, count: kept.length, ok: true });
+          return kept;
+        } catch {
+          pulls.push({ source: feed.source, fetchedAt: at, count: 0, ok: false });
+          return [];
+        }
       }),
     );
-    return mergeNews(groups)
-      .filter((n) => Date.now() - n.publishedAt < 86_400_000)
-      .slice(0, 200);
+    return {
+      items: mergeNews(groups)
+        .filter((n) => Date.now() - n.publishedAt < 86_400_000)
+        .slice(0, 250),
+      pulls: foldPulls(pulls),
+    };
   });
 }
 

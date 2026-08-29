@@ -1,5 +1,5 @@
 import { classifyTone } from "./impact";
-import { bundledMarket, bundledQuotes, bundledStocks, bundleFetchedAt, fetchMarket, fetchQuotes, fetchStockNews, searchRemote } from "./api";
+import { bundledMarket, bundledPulls, bundledQuotes, bundledStocks, bundleFetchedAt, fetchMarket, fetchQuotes, fetchStockNews, lastPulls, searchRemote } from "./api";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
 import { formatPct, formatPrice, fromNow, isFresh, marketStatus } from "./time";
@@ -22,6 +22,7 @@ let loadingMarket = marketNews.length === 0;
 let loadingMine = stockNews.length === 0;
 let error = "";
 let lastFetch = boot.fetchedAt;
+let sourcePulls = boot.pulls?.length ? boot.pulls : bundledPulls();
 let searchTimer = 0;
 
 function esc(value: string): string {
@@ -90,6 +91,7 @@ async function persist(): Promise<void> {
     market: marketNews,
     stocks: stockNews,
     quotes: [...quotes.values()],
+    pulls: sourcePulls,
     fetchedAt: bundleFetchedAt || lastFetch || Date.now(),
   });
 }
@@ -98,8 +100,23 @@ async function refreshAll(): Promise<void> {
   error = "";
   await Promise.all([refreshMarket(), refreshMine(), refreshQuotes()]);
   lastFetch = bundleFetchedAt || Date.now();
+  if (lastPulls.length) sourcePulls = lastPulls;
   await persist();
   paint();
+}
+
+function sourcePullsHTML(): string {
+  if (sourcePulls.length === 0) return "";
+  const rows = [...sourcePulls].sort((a, b) => {
+    if (a.ok !== b.ok) return a.ok ? -1 : 1;
+    return b.fetchedAt - a.fetchedAt;
+  });
+  return `<div class="pulls" aria-label="신문사별 수집 시각">${rows.map((pull) => `
+    <span class="pull${pull.ok ? "" : " bad"}">
+      <strong>${esc(pull.source)}</strong>
+      ${pull.ok ? `${esc(fromNow(pull.fetchedAt))} · ${pull.count}건` : "가져오기 실패"}
+    </span>
+  `).join("")}</div>`;
 }
 
 async function refreshMarket(): Promise<void> {
@@ -107,6 +124,7 @@ async function refreshMarket(): Promise<void> {
   paint();
   try {
     marketNews = await fetchMarket(marketNews);
+    if (lastPulls.length) sourcePulls = lastPulls;
   } catch (err) {
     error = err instanceof Error ? err.message : "뉴스를 불러오지 못했습니다.";
   } finally {
@@ -301,7 +319,8 @@ function paint(): void {
             <button class="chip${filterId === "all" ? " on" : ""}" data-filter="all">전체</button>
             ${watchlist.map((s) => `<button class="chip${filterId === s.id ? " on" : ""}" data-filter="${esc(s.id)}">${esc(s.name)}</button>`).join("")}
           </div>
-        ` : `<p class="lead">금리 · 환율 · 실적 · 지정학처럼 증시에 바로 닿을 수 있는 소식만 모아 두었습니다.</p>`}
+        ` : `<p class="lead">금리 · 환율 · 실적 · 지정학처럼 증시에 바로 닿을 수 있는 소식만 모아 두었습니다.</p>
+          ${sourcePullsHTML()}`}
         ${error ? `<div class="banner">${esc(error)}</div>` : ""}
         <section class="feed">
           ${loading && news.length === 0 ? skeleton() : ""}

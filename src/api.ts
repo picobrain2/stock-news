@@ -1,18 +1,20 @@
-import { mergeNews, mergeQuotes } from "./archive";
+import { mergeNews, mergePulls, mergeQuotes } from "./archive";
 import { searchSymbols } from "./feeds";
 import rawSnapshot from "./snapshot.json";
-import type { NewsItem, Quote, SearchHit, Stock } from "./types";
+import type { NewsItem, Quote, SearchHit, SourcePull, Stock } from "./types";
 
-const snapshot = rawSnapshot as {
+const snapshot = rawSnapshot as unknown as {
   market: NewsItem[];
   stocks: NewsItem[];
   quotes: Quote[];
+  pulls?: SourcePull[];
   fetchedAt: number;
 };
 
 const localApi = import.meta.env.DEV;
 
 export let bundleFetchedAt = 0;
+export let lastPulls: SourcePull[] = snapshot.pulls ?? [];
 
 function dataUrl(file: string): string {
   return `${new URL(`../data/${file}`, import.meta.url).href}?t=${Math.floor(Date.now() / 15_000)}`;
@@ -36,17 +38,24 @@ export function bundledQuotes(): Quote[] {
   return snapshot.quotes ?? [];
 }
 
+export function bundledPulls(): SourcePull[] {
+  return snapshot.pulls ?? [];
+}
+
 export async function fetchMarket(previous: NewsItem[] = []): Promise<NewsItem[]> {
   if (localApi) {
-    const data = await getJson<{ items: NewsItem[] }>("/api/market");
+    const data = await getJson<{ items: NewsItem[]; pulls?: SourcePull[] }>("/api/market");
+    lastPulls = mergePulls(lastPulls, data.pulls ?? []);
     return mergeNews(previous, data.items ?? []);
   }
   try {
-    const data = await getJson<{ items: NewsItem[]; fetchedAt?: number }>(dataUrl("market.json"));
+    const data = await getJson<{ items: NewsItem[]; pulls?: SourcePull[]; fetchedAt?: number }>(dataUrl("market.json"));
     bundleFetchedAt = data.fetchedAt ?? Date.now();
+    lastPulls = mergePulls(lastPulls, data.pulls ?? []);
     return mergeNews(previous, data.items ?? []);
   } catch {
     bundleFetchedAt = snapshot.fetchedAt || Date.now();
+    lastPulls = mergePulls(lastPulls, bundledPulls());
     return mergeNews(previous, bundledMarket());
   }
 }
