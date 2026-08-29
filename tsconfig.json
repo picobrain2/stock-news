@@ -12,6 +12,7 @@
     "noEmit": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
+    "resolveJsonModule": true,
     "types": ["vite/client"]
   },
   "include": ["src", "server", "vite.config.ts"]

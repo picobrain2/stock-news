@@ -8,10 +8,10 @@
   --muted: #8b97ab;
   --gold: #edbd51;
   --gold-ink: #1a1404;
-  --up: #3ecf8e;
-  --down: #ff5d73;
+  --up: #ff4d4f;
+  --down: #3d7eff;
   --blue: #7aa2ff;
-  --fresh: #3ecf8e;
+  --fresh: #edbd51;
   font-family: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
 }
 
@@ -228,8 +228,8 @@ body { background: var(--bg); color: var(--text); }
   padding: 2px 8px;
   letter-spacing: -0.02em;
 }
-.tone.up { background: #163226; color: var(--up); }
-.tone.down { background: #3a2430; color: var(--down); }
+.tone.up { background: #3a1c1c; color: var(--up); }
+.tone.down { background: #1c2a3a; color: var(--down); }
 .tone.mixed { background: #2a3140; color: var(--muted); }
 .card-meta {
   display: flex;
@@ -267,7 +267,7 @@ body { background: var(--bg); color: var(--text); }
   border-radius: 999px;
   padding: 2px 7px;
 }
-.impact.high { background: #3a2430; color: #ff8b9a; }
+.impact.high { background: #3a1c1c; color: #ff8b8b; }
 .impact.mid { background: #2e2a1c; color: var(--gold); }
 .region { color: var(--muted); }
 

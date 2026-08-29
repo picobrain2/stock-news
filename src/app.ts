@@ -1,25 +1,27 @@
 import { classifyTone } from "./impact";
-import { bundleFetchedAt, fetchMarket, fetchQuotes, fetchStockNews, searchRemote } from "./api";
+import { bundledMarket, bundledQuotes, bundledStocks, bundleFetchedAt, fetchMarket, fetchQuotes, fetchStockNews, searchRemote } from "./api";
+import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
 import { formatPct, formatPrice, fromNow, isFresh, marketStatus } from "./time";
 import type { NewsItem, Quote, SearchHit, Stock, Tab } from "./types";
 import { loadWatchlist, saveWatchlist } from "./watchlist";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
+const boot = loadArchive();
 
 let tab: Tab = "market";
 let watchlist = loadWatchlist();
-let quotes = new Map<string, Quote>();
-let marketNews: NewsItem[] = [];
-let stockNews: NewsItem[] = [];
+let quotes = new Map((boot.quotes.length ? boot.quotes : bundledQuotes()).map((q) => [q.symbol, q]));
+let marketNews: NewsItem[] = boot.market.length ? boot.market : bundledMarket();
+let stockNews: NewsItem[] = boot.stocks.length ? boot.stocks : bundledStocks();
 let filterId = "all";
 let regionFilter: "all" | "kr" | "us" = "all";
 let search = "";
 let suggestions: SearchHit[] = [];
-let loadingMarket = true;
-let loadingMine = false;
+let loadingMarket = marketNews.length === 0;
+let loadingMine = stockNews.length === 0;
 let error = "";
-let lastFetch = 0;
+let lastFetch = boot.fetchedAt;
 let searchTimer = 0;
 
 function esc(value: string): string {
@@ -83,10 +85,20 @@ function removeStock(id: string): void {
   paint();
 }
 
+async function persist(): Promise<void> {
+  saveArchive({
+    market: marketNews,
+    stocks: stockNews,
+    quotes: [...quotes.values()],
+    fetchedAt: bundleFetchedAt || lastFetch || Date.now(),
+  });
+}
+
 async function refreshAll(): Promise<void> {
   error = "";
   await Promise.all([refreshMarket(), refreshMine(), refreshQuotes()]);
   lastFetch = bundleFetchedAt || Date.now();
+  await persist();
   paint();
 }
 
@@ -94,7 +106,7 @@ async function refreshMarket(): Promise<void> {
   loadingMarket = true;
   paint();
   try {
-    marketNews = await fetchMarket();
+    marketNews = await fetchMarket(marketNews);
   } catch (err) {
     error = err instanceof Error ? err.message : "뉴스를 불러오지 못했습니다.";
   } finally {
@@ -113,7 +125,7 @@ async function refreshMine(): Promise<void> {
   loadingMine = true;
   paint();
   try {
-    stockNews = await fetchStockNews(watchlist);
+    stockNews = await fetchStockNews(watchlist, stockNews);
   } catch (err) {
     error = err instanceof Error ? err.message : "종목 뉴스를 불러오지 못했습니다.";
   } finally {
@@ -124,7 +136,7 @@ async function refreshMine(): Promise<void> {
 
 async function refreshQuotes(): Promise<void> {
   try {
-    const rows = await fetchQuotes(watchlist);
+    const rows = await fetchQuotes(watchlist, [...quotes.values()]);
     quotes = new Map(rows.map((q) => [q.symbol, q]));
     paint();
   } catch {
@@ -201,7 +213,6 @@ function newsCard(item: NewsItem): string {
 
 function watchRow(stock: Stock): string {
   const q = quoteFor(stock);
-  const up = q && q.changePct >= 0;
   const active = tab === "mine" && filterId === stock.id ? " active" : "";
   return `
     <div class="watch${active}" data-open="${esc(stock.id)}">
@@ -212,7 +223,7 @@ function watchRow(stock: Stock): string {
       <div class="watch-px">
         ${q ? `
           <div class="px">${esc(formatPrice(q.price, q.currency))}</div>
-          <div class="${up ? "up" : "down"}">${esc(formatPct(q.changePct))}</div>
+          <div class="${q.changePct > 0 ? "up" : q.changePct < 0 ? "down" : "muted"}">${esc(formatPct(q.changePct))}</div>
         ` : `<div class="muted">시세 대기</div>`}
       </div>
       <button class="icon-btn" data-remove="${esc(stock.id)}" title="빼기" aria-label="${esc(stock.name)} 빼기">×</button>
@@ -299,7 +310,7 @@ function paint(): void {
           ${rest.length ? `${spotlight.length ? `<h2 class="feed-label">최신</h2>` : ""}${rest.map(newsCard).join("")}` : ""}
         </section>
         <footer class="foot">
-          ${lastFetch ? `뉴스 수집 ${esc(fromNow(lastFetch))}` : ""} · 약 10분마다 갱신 · 출처 원문 링크
+          ${lastFetch ? `뉴스 수집 ${esc(fromNow(lastFetch))}` : ""} · 하루치 보관 · 새 소식만 추가
         </footer>
       </main>
     </div>

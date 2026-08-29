@@ -1,0 +1,72 @@
+import type { NewsItem, Quote } from "./types";
+
+const KEY = "sihwang.archive.v1";
+const DAY_MS = 86_400_000;
+
+export interface NewsArchive {
+  market: NewsItem[];
+  stocks: NewsItem[];
+  quotes: Quote[];
+  fetchedAt: number;
+}
+
+function emptyArchive(): NewsArchive {
+  return { market: [], stocks: [], quotes: [], fetchedAt: 0 };
+}
+
+function newsKey(item: NewsItem): string {
+  return item.url || item.id;
+}
+
+export function pruneNews(items: NewsItem[], now = Date.now()): NewsItem[] {
+  const seen = new Set<string>();
+  return items
+    .filter((item) => Number.isFinite(item.publishedAt) && now - item.publishedAt <= DAY_MS)
+    .sort((a, b) => b.publishedAt - a.publishedAt)
+    .filter((item) => {
+      const key = newsKey(item);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 250);
+}
+
+export function mergeNews(previous: NewsItem[], incoming: NewsItem[], now = Date.now()): NewsItem[] {
+  const map = new Map<string, NewsItem>();
+  for (const item of previous) map.set(newsKey(item), item);
+  for (const item of incoming) map.set(newsKey(item), item);
+  return pruneNews([...map.values()], now);
+}
+
+export function mergeQuotes(previous: Quote[], incoming: Quote[]): Quote[] {
+  const map = new Map<string, Quote>();
+  for (const q of previous) map.set(q.symbol, q);
+  for (const q of incoming) map.set(q.symbol, q);
+  return [...map.values()];
+}
+
+export function loadArchive(): NewsArchive {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(KEY) ?? "") as NewsArchive;
+    if (!parsed || !Array.isArray(parsed.market)) return emptyArchive();
+    return {
+      market: pruneNews(parsed.market),
+      stocks: pruneNews(parsed.stocks ?? []),
+      quotes: Array.isArray(parsed.quotes) ? parsed.quotes : [],
+      fetchedAt: parsed.fetchedAt ?? 0,
+    };
+  } catch {
+    return emptyArchive();
+  }
+}
+
+export function saveArchive(archive: NewsArchive): void {
+  const next: NewsArchive = {
+    market: pruneNews(archive.market),
+    stocks: pruneNews(archive.stocks),
+    quotes: archive.quotes,
+    fetchedAt: archive.fetchedAt || Date.now(),
+  };
+  localStorage.setItem(KEY, JSON.stringify(next));
+}

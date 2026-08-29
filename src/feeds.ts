@@ -204,7 +204,7 @@ function mergeNews(groups: NewsItem[][]): NewsItem[] {
   const now = Date.now();
   for (const item of groups.flat()) {
     if (item.title.replace(/\s+/g, "").length < 8) continue;
-    if (now - item.publishedAt > 8 * 86_400_000) continue;
+    if (now - item.publishedAt > 86_400_000) continue;
     const key = normalizeTitle(item.title).slice(0, 80);
     if (!key || seen.has(key)) continue;
     seen.add(key);
@@ -237,8 +237,8 @@ export async function getMarketNews(): Promise<NewsItem[]> {
       }),
     );
     return mergeNews(groups)
-      .filter((n) => Date.now() - n.publishedAt < 4 * 86_400_000)
-      .slice(0, 80);
+      .filter((n) => Date.now() - n.publishedAt < 86_400_000)
+      .slice(0, 200);
   });
 }
 
@@ -351,7 +351,7 @@ export async function getStockNews(stocks: StockQuery[], opts?: { light?: boolea
         tone: classifyTone(item.title, item.snippet, names).tone,
       });
     }
-    return mergeNews([tagged]).slice(0, 100);
+    return mergeNews([tagged]).slice(0, 250);
   });
 }
 
