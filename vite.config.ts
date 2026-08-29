@@ -17,7 +17,7 @@ function attach(server: ViteDevServer | PreviewServer): void {
 }
 
 export default defineConfig({
-  base: "./",
+  base: process.env.GITHUB_ACTIONS ? "/stock-news/" : "./",
   plugins: [
     {
       name: "sihwang-api",
