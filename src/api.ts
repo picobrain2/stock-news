@@ -1,7 +1,14 @@
 import { mergeNews, mergeQuotes } from "./archive";
 import { searchSymbols } from "./feeds";
-import snapshot from "./snapshot.json";
+import rawSnapshot from "./snapshot.json";
 import type { NewsItem, Quote, SearchHit, Stock } from "./types";
+
+const snapshot = rawSnapshot as {
+  market: NewsItem[];
+  stocks: NewsItem[];
+  quotes: Quote[];
+  fetchedAt: number;
+};
 
 const localApi = import.meta.env.DEV;
 
