@@ -16,6 +16,7 @@ export interface Stock {
 export interface NewsItem {
   id: string;
   title: string;
+  titleEn?: string;
   url: string;
   source: string;
   publishedAt: number;

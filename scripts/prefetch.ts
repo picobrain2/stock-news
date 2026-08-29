@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "../src/archive";
 import { defaultWatchlist, popularStocks } from "../src/catalog";
 import { getMarketNews, getQuotes, getStockNews } from "../src/feeds";
+import { translateNews } from "../src/translate";
 import type { NewsItem, Quote, SourcePull } from "../src/types";
 
 const outDir = new URL("../public/data/", import.meta.url);
@@ -60,8 +61,10 @@ async function main(): Promise<void> {
     getQuotes(stocks.map((s) => s.yahoo)),
   ]);
   const fetchedAt = Date.now();
-  const marketMerged = mergeNews(prevMarket, fresh.items);
-  const stocksMerged = mergeNews(prevStocks, stockNews);
+  const [marketMerged, stocksMerged] = await Promise.all([
+    translateNews(mergeNews(prevMarket, fresh.items)),
+    translateNews(mergeNews(prevStocks, stockNews)),
+  ]);
   const quotesMerged = mergeQuotes(prevQuotes, quotes);
   const pullsMerged = mergePulls(prevPulls, fresh.pulls);
   await mkdir(outDir, { recursive: true });
@@ -81,6 +84,7 @@ async function main(): Promise<void> {
   console.log(`prev market=${prevMarket.length} + new=${fresh.items.length} -> ${marketMerged.length}`);
   console.log(`prev stocks=${prevStocks.length} + new=${stockNews.length} -> ${stocksMerged.length}`);
   console.log("pulls", pullsMerged.map((p) => `${p.source}:${p.ok ? p.count : "fail"}`).join(", "));
+  console.log(`translated market=${marketMerged.filter((n) => Boolean(n.titleEn)).length} stocks=${stocksMerged.filter((n) => Boolean(n.titleEn)).length}`);
 }
 
 main().catch((err: unknown) => {

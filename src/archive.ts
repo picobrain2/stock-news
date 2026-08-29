@@ -1,3 +1,4 @@
+import { cleanSnippet, needsKorean } from "./text";
 import type { NewsItem, Quote, SourcePull } from "./types";
 
 const KEY = "sihwang.archive.v1";
@@ -19,9 +20,35 @@ function newsKey(item: NewsItem): string {
   return item.url || item.id;
 }
 
+function sanitizeItem(item: NewsItem): NewsItem {
+  return { ...item, snippet: cleanSnippet(item.snippet, item.title) };
+}
+
+function combineNews(previous: NewsItem, incoming: NewsItem): NewsItem {
+  let title = incoming.title;
+  let titleEn = incoming.titleEn ?? previous.titleEn;
+  if (needsKorean(incoming.title) && !needsKorean(previous.title)) {
+    title = previous.title;
+    titleEn = incoming.titleEn ?? incoming.title;
+  } else if (!needsKorean(incoming.title) && needsKorean(previous.title)) {
+    titleEn = incoming.titleEn ?? previous.titleEn ?? previous.title;
+  }
+  if (titleEn && titleEn === title) titleEn = undefined;
+  return {
+    ...incoming,
+    title,
+    titleEn,
+    snippet: cleanSnippet(incoming.snippet, title) || cleanSnippet(previous.snippet, title),
+    tags: incoming.tags.length ? incoming.tags : previous.tags,
+    impact: Math.max(incoming.impact, previous.impact),
+    stockIds: [...new Set([...incoming.stockIds, ...previous.stockIds])],
+  };
+}
+
 export function pruneNews(items: NewsItem[], now = Date.now()): NewsItem[] {
   const seen = new Set<string>();
   return items
+    .map(sanitizeItem)
     .filter((item) => Number.isFinite(item.publishedAt) && now - item.publishedAt <= DAY_MS)
     .sort((a, b) => b.publishedAt - a.publishedAt)
     .filter((item) => {
@@ -36,7 +63,10 @@ export function pruneNews(items: NewsItem[], now = Date.now()): NewsItem[] {
 export function mergeNews(previous: NewsItem[], incoming: NewsItem[], now = Date.now()): NewsItem[] {
   const map = new Map<string, NewsItem>();
   for (const item of previous) map.set(newsKey(item), item);
-  for (const item of incoming) map.set(newsKey(item), item);
+  for (const item of incoming) {
+    const prev = map.get(newsKey(item));
+    map.set(newsKey(item), prev ? combineNews(prev, item) : sanitizeItem(item));
+  }
   return pruneNews([...map.values()], now);
 }
 

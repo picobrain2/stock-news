@@ -1,4 +1,4 @@
-import { mergeNews, mergePulls, mergeQuotes } from "./archive";
+import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "./archive";
 import { searchSymbols } from "./feeds";
 import rawSnapshot from "./snapshot.json";
 import type { NewsItem, Quote, SearchHit, SourcePull, Stock } from "./types";
@@ -27,11 +27,11 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 export function bundledMarket(): NewsItem[] {
-  return snapshot.market ?? [];
+  return pruneNews(snapshot.market ?? []);
 }
 
 export function bundledStocks(): NewsItem[] {
-  return snapshot.stocks ?? [];
+  return pruneNews(snapshot.stocks ?? []);
 }
 
 export function bundledQuotes(): Quote[] {

@@ -1,4 +1,5 @@
 import { classifyTone, inferRegion, isMarketRelevant, scoreImpact } from "./impact";
+import { cleanSnippet, stripHtml } from "./text";
 import type { NewsItem, Quote, SearchHit, SourcePull } from "./types";
 
 const isBrowser = typeof window !== "undefined";
@@ -77,19 +78,7 @@ async function fetchText(url: string, timeoutMs = 9000): Promise<string> {
 }
 
 function decode(raw: string): string {
-  return raw
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
-    .replace(/\s+/g, " ")
-    .trim();
+  return stripHtml(raw);
 }
 
 function tagText(block: string, name: string): string {
@@ -193,7 +182,7 @@ function parseRss(xml: string, fallbackSource: string): NewsItem[] {
     if (!rawTitle || !url) continue;
     const source = sourceOf(block, rawTitle, url) || fallbackSource;
     const title = stripSource(rawTitle, source);
-    const snippet = tagText(block, "description") || tagText(block, "summary");
+    const snippet = cleanSnippet(tagText(block, "description") || tagText(block, "summary"), title);
     const dateRaw =
       tagText(block, "pubDate") ||
       tagText(block, "published") ||
@@ -207,7 +196,7 @@ function parseRss(xml: string, fallbackSource: string): NewsItem[] {
       url,
       source,
       publishedAt,
-      snippet: snippet.slice(0, 240),
+      snippet,
       tags,
       region: inferRegion(title, source, url),
       stockIds: [],
