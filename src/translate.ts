@@ -98,23 +98,29 @@ export async function translateToKo(text: string): Promise<string | null> {
 }
 
 export async function translateNews(items: NewsItem[]): Promise<NewsItem[]> {
-  const pending = items.filter((item) => needsKorean(item.title));
-  if (pending.length === 0) return items;
-  const done = new Map<string, string>();
-  await mapLimit(pending.slice(0, 120), 3, async (item) => {
+  const titleNeed = items.filter((item) => needsKorean(item.title)).slice(0, 120);
+  const snipNeed = items.filter((item) => needsKorean(item.snippet)).slice(0, 80);
+  const titles = new Map<string, string>();
+  const snips = new Map<string, string>();
+  await mapLimit(titleNeed, 3, async (item) => {
     const ko = await translateToKo(item.title);
-    if (ko) done.set(item.id, ko);
+    if (ko) titles.set(item.id, ko);
     await sleep(80);
   });
-  const out = items.map((item) => {
-    const title = done.get(item.id);
-    if (!title) return item;
+  await mapLimit(snipNeed, 3, async (item) => {
+    const ko = await translateToKo(item.snippet);
+    if (ko) snips.set(item.id, ko);
+    await sleep(80);
+  });
+  console.log(`translate titles ${titles.size}/${titleNeed.length} snippets ${snips.size}/${snipNeed.length}`);
+  return items.map((item) => {
+    const title = titles.get(item.id);
+    const snippet = snips.get(item.id);
     return {
       ...item,
-      titleEn: item.titleEn ?? item.title,
-      title,
+      titleEn: title ? item.titleEn ?? item.title : item.titleEn,
+      title: title ?? item.title,
+      snippet: snippet ?? item.snippet,
     };
   });
-  console.log(`translate ${done.size}/${Math.min(pending.length, 120)}`);
-  return out;
 }

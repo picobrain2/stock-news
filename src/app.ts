@@ -3,7 +3,7 @@ import { bundledMarket, bundledPulls, bundledQuotes, bundledStocks, bundleFetche
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
 import { formatPct, formatPrice, fromNow, isFresh, marketStatus } from "./time";
-import { cleanSnippet, needsKorean } from "./text";
+import { cleanSnippet } from "./text";
 import type { NewsItem, Quote, SearchHit, Stock, Tab } from "./types";
 import { loadWatchlist, saveWatchlist } from "./watchlist";
 
@@ -211,7 +211,6 @@ function newsCard(item: NewsItem): string {
   const impact = item.impact >= 28 ? "high" : item.impact >= 16 ? "mid" : "";
   const showTone = tab === "mine" || call.tone !== "mixed";
   const snippet = cleanSnippet(item.snippet, item.title);
-  const showSnippet = Boolean(snippet) && !needsKorean(snippet);
   return `
     <a class="card${fresh} tone-${call.tone}" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">
       <div class="card-meta">
@@ -224,7 +223,7 @@ function newsCard(item: NewsItem): string {
       </div>
       <h3>${esc(item.title)}</h3>
       ${item.titleEn && item.titleEn !== item.title ? `<p class="orig">${esc(item.titleEn)}</p>` : ""}
-      ${showSnippet ? `<p>${esc(snippet)}</p>` : ""}
+      ${snippet ? `<p class="summary">${esc(snippet)}</p>` : ""}
       <div class="card-tags">
         ${item.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}
         ${stocks.map((s) => `<span class="tag stock">${esc(s.name)}</span>`).join("")}

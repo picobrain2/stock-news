@@ -280,6 +280,12 @@ body { background: var(--bg); color: var(--text); }
   font-size: 12px;
   color: #6d7a8f;
 }
+.card p.summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .card-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .tag {
   font-size: 11px;

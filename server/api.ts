@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { getMarketNews, getQuotes, getStockNews, searchSymbols, type StockQuery } from "../src/feeds";
+import { enrichSnippets, getMarketNews, getQuotes, getStockNews, searchSymbols, type StockQuery } from "../src/feeds";
 import { translateNews } from "../src/translate";
 
 function readStocks(url: URL): StockQuery[] {
@@ -32,13 +32,13 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
 
   if (path === "/api/market") {
     const { items, pulls } = await getMarketNews();
-    json(res, { items: await translateNews(items), pulls, fetchedAt: Date.now() });
+    json(res, { items: await translateNews(await enrichSnippets(items)), pulls, fetchedAt: Date.now() });
     return;
   }
   if (path === "/api/stock-news") {
     const stocks = readStocks(url);
     const items = stocks.length ? await getStockNews(stocks) : [];
-    json(res, { items: await translateNews(items), fetchedAt: Date.now() });
+    json(res, { items: await translateNews(await enrichSnippets(items)), fetchedAt: Date.now() });
     return;
   }
   if (path === "/api/quotes") {

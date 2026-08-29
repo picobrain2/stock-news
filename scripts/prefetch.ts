@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "../src/archive";
 import { defaultWatchlist, popularStocks } from "../src/catalog";
-import { getMarketNews, getQuotes, getStockNews } from "../src/feeds";
+import { enrichSnippets, getMarketNews, getQuotes, getStockNews } from "../src/feeds";
 import { translateNews } from "../src/translate";
 import type { NewsItem, Quote, SourcePull } from "../src/types";
 
@@ -62,8 +62,8 @@ async function main(): Promise<void> {
   ]);
   const fetchedAt = Date.now();
   const [marketMerged, stocksMerged] = await Promise.all([
-    translateNews(mergeNews(prevMarket, fresh.items)),
-    translateNews(mergeNews(prevStocks, stockNews)),
+    translateNews(await enrichSnippets(mergeNews(prevMarket, fresh.items))),
+    translateNews(await enrichSnippets(mergeNews(prevStocks, stockNews))),
   ]);
   const quotesMerged = mergeQuotes(prevQuotes, quotes);
   const pullsMerged = mergePulls(prevPulls, fresh.pulls);

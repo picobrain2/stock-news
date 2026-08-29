@@ -1,5 +1,5 @@
 import { classifyTone, inferRegion, isMarketRelevant, scoreImpact } from "./impact";
-import { cleanSnippet, stripHtml } from "./text";
+import { extractArticleText, extractCanonicalUrl, stripHtml, summarizeText } from "./text";
 import type { NewsItem, Quote, SearchHit, SourcePull } from "./types";
 
 const isBrowser = typeof window !== "undefined";
@@ -173,6 +173,24 @@ function stripSource(title: string, source: string): string {
   return t || title;
 }
 
+function rssRaw(block: string, name: string): string {
+  const re = new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, "i");
+  return block.match(re)?.[1] ?? "";
+}
+
+function rssSnippet(block: string, title: string): string {
+  for (const name of ["content:encoded", "content", "description", "summary", "media:description"]) {
+    let raw = rssRaw(block, name);
+    if (!raw) continue;
+    raw = raw.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1");
+    raw = raw.replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, " ");
+    raw = raw.replace(/<font\b[^>]*>[\s\S]*?<\/font>/gi, " ");
+    const text = summarizeText(raw, title, 420);
+    if (text.length >= 40) return text;
+  }
+  return "";
+}
+
 function parseRss(xml: string, fallbackSource: string): NewsItem[] {
   const items: NewsItem[] = [];
   const blocks = xml.match(/<item\b[\s\S]*?<\/item>/gi) ?? xml.match(/<entry\b[\s\S]*?<\/entry>/gi) ?? [];
@@ -182,7 +200,7 @@ function parseRss(xml: string, fallbackSource: string): NewsItem[] {
     if (!rawTitle || !url) continue;
     const source = sourceOf(block, rawTitle, url) || fallbackSource;
     const title = stripSource(rawTitle, source);
-    const snippet = cleanSnippet(tagText(block, "description") || tagText(block, "summary"), title);
+    const snippet = rssSnippet(block, title);
     const dateRaw =
       tagText(block, "pubDate") ||
       tagText(block, "published") ||
@@ -326,6 +344,38 @@ export async function getMarketNews(): Promise<{ items: NewsItem[]; pulls: Sourc
       pulls: foldPulls(pulls),
     };
   });
+}
+
+async function articleSummary(url: string, title: string): Promise<string> {
+  try {
+    let html = await fetchText(url, 5500);
+    let target = url;
+    if (/news\.google\.com/i.test(url)) {
+      target = extractCanonicalUrl(html, url);
+      if (target !== url) html = await fetchText(target, 5500);
+    }
+    return summarizeText(extractArticleText(html), title, 420);
+  } catch {
+    return "";
+  }
+}
+
+export async function enrichSnippets(items: NewsItem[]): Promise<NewsItem[]> {
+  if (isBrowser) {
+    return items.map((item) => ({ ...item, snippet: summarizeText(item.snippet, item.title) }));
+  }
+  const need = items.filter((item) => summarizeText(item.snippet, item.title).length < 48).slice(0, 40);
+  const found = new Map<string, string>();
+  await mapLimit(need, 5, async (item) => {
+    const text = await articleSummary(item.url, item.title);
+    if (text.length >= 40) found.set(item.id, text);
+    await sleep(50);
+  });
+  console.log(`snippets ${found.size}/${need.length}`);
+  return items.map((item) => ({
+    ...item,
+    snippet: found.get(item.id) || summarizeText(item.snippet, item.title),
+  }));
 }
 
 export interface StockQuery {

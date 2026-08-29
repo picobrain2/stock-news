@@ -1,4 +1,4 @@
-import { cleanSnippet, needsKorean } from "./text";
+import { betterSnippet, needsKorean } from "./text";
 import type { NewsItem, Quote, SourcePull } from "./types";
 
 const KEY = "sihwang.archive.v1";
@@ -21,7 +21,7 @@ function newsKey(item: NewsItem): string {
 }
 
 function sanitizeItem(item: NewsItem): NewsItem {
-  return { ...item, snippet: cleanSnippet(item.snippet, item.title) };
+  return { ...item, snippet: betterSnippet(item.snippet, "", item.title) };
 }
 
 function combineNews(previous: NewsItem, incoming: NewsItem): NewsItem {
@@ -38,7 +38,7 @@ function combineNews(previous: NewsItem, incoming: NewsItem): NewsItem {
     ...incoming,
     title,
     titleEn,
-    snippet: cleanSnippet(incoming.snippet, title) || cleanSnippet(previous.snippet, title),
+    snippet: betterSnippet(incoming.snippet, previous.snippet, title),
     tags: incoming.tags.length ? incoming.tags : previous.tags,
     impact: Math.max(incoming.impact, previous.impact),
     stockIds: [...new Set([...incoming.stockIds, ...previous.stockIds])],
