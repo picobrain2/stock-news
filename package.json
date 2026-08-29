@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prefetch": "esbuild scripts/prefetch.ts --bundle --platform=node --format=esm --outfile=scripts/.prefetch.mjs && node scripts/.prefetch.mjs",
     "build": "tsc --noEmit && vite build",
+    "build:site": "npm run prefetch && npm run build",
     "preview": "vite preview"
   },
   "devDependencies": {

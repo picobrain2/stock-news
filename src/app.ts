@@ -1,5 +1,5 @@
 import { classifyTone } from "./impact";
-import { fetchMarket, fetchQuotes, fetchStockNews, searchRemote } from "./api";
+import { bundleFetchedAt, fetchMarket, fetchQuotes, fetchStockNews, searchRemote } from "./api";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
 import { formatPct, formatPrice, fromNow, isFresh, marketStatus } from "./time";
 import type { NewsItem, Quote, SearchHit, Stock, Tab } from "./types";
@@ -85,8 +85,9 @@ function removeStock(id: string): void {
 
 async function refreshAll(): Promise<void> {
   error = "";
-  lastFetch = Date.now();
   await Promise.all([refreshMarket(), refreshMine(), refreshQuotes()]);
+  lastFetch = bundleFetchedAt || Date.now();
+  paint();
 }
 
 async function refreshMarket(): Promise<void> {
@@ -298,7 +299,7 @@ function paint(): void {
           ${rest.length ? `${spotlight.length ? `<h2 class="feed-label">최신</h2>` : ""}${rest.map(newsCard).join("")}` : ""}
         </section>
         <footer class="foot">
-          ${lastFetch ? `마지막 갱신 ${esc(fromNow(lastFetch))}` : ""} · 출처 원문 링크 · 개인 용도
+          ${lastFetch ? `뉴스 수집 ${esc(fromNow(lastFetch))}` : ""} · 약 10분마다 갱신 · 출처 원문 링크
         </footer>
       </main>
     </div>
@@ -322,7 +323,7 @@ function emptyState(): string {
   if (tab === "mine") {
     return `<div class="empty">이 종목과 연결된 최근 뉴스가 없습니다. 다른 종목을 고르거나 조금 뒤 다시 새로고침해 보세요.</div>`;
   }
-  return `<div class="empty">지금은 받아온 시장 뉴스가 없습니다. 새로고침을 눌러 보세요.</div>`;
+  return `<div class="empty">시장 뉴스를 아직 못 받았습니다.<br>사이트는 약 10분마다 새 소식을 모읍니다. 잠시 뒤 새로고침해 보세요.</div>`;
 }
 
 function hitFromButton(btn: HTMLElement): SearchHit | undefined {

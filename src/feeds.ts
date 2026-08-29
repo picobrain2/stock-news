@@ -317,26 +317,27 @@ async function yahooTickerNews(symbol: string): Promise<NewsItem[]> {
   }
 }
 
-export async function getStockNews(stocks: StockQuery[]): Promise<NewsItem[]> {
-  const key = `stocks:${stocks.map((s) => s.id).sort().join(",")}`;
+export async function getStockNews(stocks: StockQuery[], opts?: { light?: boolean }): Promise<NewsItem[]> {
+  const light = Boolean(opts?.light) || isBrowser;
+  const key = `stocks:${light ? "l:" : ""}${stocks.map((s) => s.id).sort().join(",")}`;
   return cached(key, CACHE_MS, async () => {
-    const jobs: Promise<NewsItem[]>[] = [];
-    for (const stock of stocks) {
-      jobs.push(
-        rss(googleNews(googleQuery(stock, "kr"), "kr"), "Google 뉴스").then((items) =>
-          items.map((n) => ({ ...n, stockIds: [stock.id] })),
-        ),
-      );
-      if (!isBrowser) {
-        jobs.push(
-          rss(googleNews(googleQuery(stock, "us"), "us"), "Google News").then((items) =>
-            items.map((n) => ({ ...n, stockIds: [stock.id] })),
-          ),
-        );
-        if (stock.market === "us") jobs.push(yahooTickerNews(stock.yahoo));
+    const groups = await mapLimit(stocks, 5, async (stock) => {
+      const rows: NewsItem[] = [];
+      try {
+        const kr = await rss(googleNews(googleQuery(stock, "kr"), "kr"), "Google 뉴스");
+        rows.push(...kr.map((n) => ({ ...n, stockIds: [stock.id] })));
+      } catch { /* skip one feed */ }
+      if (!light) {
+        try {
+          const us = await rss(googleNews(googleQuery(stock, "us"), "us"), "Google News");
+          rows.push(...us.map((n) => ({ ...n, stockIds: [stock.id] })));
+        } catch { /* skip */ }
+        if (stock.market === "us") {
+          rows.push(...(await yahooTickerNews(stock.yahoo)));
+        }
       }
-    }
-    const groups = await settled(jobs);
+      return rows;
+    });
     const tagged: NewsItem[] = [];
     for (const item of groups.flat()) {
       const matched = stocks.filter((s) => item.stockIds.includes(s.id) || mentionsStock(item, s));
