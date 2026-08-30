@@ -1,5 +1,51 @@
 const rtf = new Intl.RelativeTimeFormat("ko", { numeric: "auto" });
 
+export function parseNewsDate(raw: string, now = Date.now()): number {
+  const s = raw
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/<\/?[a-z][^>]*>/gi, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return 0;
+  const direct = Date.parse(s);
+  if (Number.isFinite(direct)) return clampNewsDate(direct, now);
+  const kr = s.match(
+    /(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일(?:\s*(\d{1,2})\s*시(?:\s*(\d{1,2})\s*분)?)?/,
+  );
+  if (kr) {
+    return clampNewsDate(new Date(
+      Number(kr[1]),
+      Number(kr[2]) - 1,
+      Number(kr[3]),
+      Number(kr[4] ?? 0),
+      Number(kr[5] ?? 0),
+    ).getTime(), now);
+  }
+  const dotted = s.match(/(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (dotted) {
+    const iso = `${dotted[1]}-${dotted[2].padStart(2, "0")}-${dotted[3].padStart(2, "0")}T${(dotted[4] ?? "00").padStart(2, "0")}:${dotted[5] ?? "00"}:${dotted[6] ?? "00"}+09:00`;
+    const t = Date.parse(iso);
+    if (Number.isFinite(t)) return clampNewsDate(t, now);
+  }
+  if (/^\d{10}$/.test(s)) return clampNewsDate(Number(s) * 1000, now);
+  if (/^\d{13}$/.test(s)) return clampNewsDate(Number(s), now);
+  return 0;
+}
+
+function clampNewsDate(ts: number, now: number): number {
+  if (!Number.isFinite(ts) || ts <= 0) return 0;
+  if (ts > now + 2 * 3_600_000) return 0;
+  return ts;
+}
+
+export function pickPublishedAt(a: number, b: number): number {
+  const left = a > 0 ? a : 0;
+  const right = b > 0 ? b : 0;
+  if (left && right) return Math.min(left, right);
+  return left || right;
+}
+
 export function fromNow(ts: number, now = Date.now()): string {
   const diff = ts - now;
   const min = Math.round(diff / 60_000);

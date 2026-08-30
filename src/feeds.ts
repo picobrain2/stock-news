@@ -1,5 +1,6 @@
 import { classifyTone, inferRegion, isMarketRelevant, isOffTopicNews, scoreImpact } from "./impact";
-import { extractArticleText, extractCanonicalUrl, stripHtml, summarizeText } from "./text";
+import { extractArticleText, extractCanonicalUrl, extractPublishedAt, stripHtml, summarizeText } from "./text";
+import { parseNewsDate, pickPublishedAt } from "./time";
 import type { NewsItem, Quote, SearchHit, SourcePull } from "./types";
 
 const isBrowser = typeof window !== "undefined";
@@ -191,6 +192,16 @@ function rssSnippet(block: string, title: string): string {
   return "";
 }
 
+function rssDate(block: string): number {
+  const attr = block.match(/datetime=["']([^"']+)["']/i)?.[1] ?? "";
+  const raws = ["pubDate", "published", "updated", "dc:date", "date"].map((name) => rssRaw(block, name));
+  for (const raw of [attr, ...raws]) {
+    const t = parseNewsDate(raw);
+    if (t) return t;
+  }
+  return 0;
+}
+
 function parseRss(xml: string, fallbackSource: string): NewsItem[] {
   const items: NewsItem[] = [];
   const blocks = xml.match(/<item\b[\s\S]*?<\/item>/gi) ?? xml.match(/<entry\b[\s\S]*?<\/entry>/gi) ?? [];
@@ -201,12 +212,7 @@ function parseRss(xml: string, fallbackSource: string): NewsItem[] {
     const source = sourceOf(block, rawTitle, url) || fallbackSource;
     const title = stripSource(rawTitle, source);
     const snippet = rssSnippet(block, title);
-    const dateRaw =
-      tagText(block, "pubDate") ||
-      tagText(block, "published") ||
-      tagText(block, "updated") ||
-      tagText(block, "dc:date");
-    const publishedAt = Date.parse(dateRaw) || Date.now();
+    const publishedAt = rssDate(block);
     const { score, tags } = scoreImpact(title, snippet);
     items.push({
       id: hash(`${url}|${title}`),
@@ -269,7 +275,7 @@ function mergeNews(groups: NewsItem[][]): NewsItem[] {
   const now = Date.now();
   for (const item of groups.flat()) {
     if (item.title.replace(/\s+/g, "").length < 8) continue;
-    if (now - item.publishedAt > 86_400_000) continue;
+    if (item.publishedAt > 0 && now - item.publishedAt > 86_400_000) continue;
     const key = normalizeTitle(item.title).slice(0, 80);
     if (!key || seen.has(key)) continue;
     seen.add(key);
@@ -339,24 +345,26 @@ export async function getMarketNews(): Promise<{ items: NewsItem[]; pulls: Sourc
     );
     return {
       items: mergeNews(groups)
-        .filter((n) => Date.now() - n.publishedAt < 86_400_000)
+        .filter((n) => n.publishedAt <= 0 || Date.now() - n.publishedAt < 86_400_000)
         .slice(0, 250),
       pulls: foldPulls(pulls),
     };
   });
 }
 
-async function articleSummary(url: string, title: string): Promise<string> {
+async function articleSummary(url: string, title: string): Promise<{ snippet: string; publishedAt: number }> {
   try {
     let html = await fetchText(url, 5500);
-    let target = url;
     if (/news\.google\.com/i.test(url)) {
-      target = extractCanonicalUrl(html, url);
+      const target = extractCanonicalUrl(html, url);
       if (target !== url) html = await fetchText(target, 5500);
     }
-    return summarizeText(extractArticleText(html), title, 420);
+    return {
+      snippet: summarizeText(extractArticleText(html), title, 420),
+      publishedAt: extractPublishedAt(html),
+    };
   } catch {
-    return "";
+    return { snippet: "", publishedAt: 0 };
   }
 }
 
@@ -364,17 +372,22 @@ export async function enrichSnippets(items: NewsItem[]): Promise<NewsItem[]> {
   if (isBrowser) {
     return items.map((item) => ({ ...item, snippet: summarizeText(item.snippet, item.title) }));
   }
-  const need = items.filter((item) => summarizeText(item.snippet, item.title).length < 48).slice(0, 40);
+  const need = items
+    .filter((item) => summarizeText(item.snippet, item.title).length < 48 || item.publishedAt <= 0)
+    .slice(0, 40);
   const found = new Map<string, string>();
+  const dates = new Map<string, number>();
   await mapLimit(need, 5, async (item) => {
-    const text = await articleSummary(item.url, item.title);
-    if (text.length >= 40) found.set(item.id, text);
+    const meta = await articleSummary(item.url, item.title);
+    if (meta.snippet.length >= 40) found.set(item.id, meta.snippet);
+    if (meta.publishedAt > 0) dates.set(item.id, meta.publishedAt);
     await sleep(50);
   });
   console.log(`snippets ${found.size}/${need.length}`);
   return items.map((item) => ({
     ...item,
     snippet: found.get(item.id) || summarizeText(item.snippet, item.title),
+    publishedAt: pickPublishedAt(item.publishedAt, dates.get(item.id) ?? 0),
   }));
 }
 
@@ -455,7 +468,7 @@ async function yahooTickerNews(symbol: string): Promise<NewsItem[]> {
           title,
           url: n.link ?? "",
           source: n.publisher ?? "Yahoo Finance",
-          publishedAt: (n.providerPublishTime ?? 0) * 1000 || Date.now(),
+          publishedAt: (n.providerPublishTime ?? 0) * 1000 || 0,
           snippet,
           tags,
           region: "us" as const,

@@ -1,3 +1,5 @@
+import { parseNewsDate } from "./time";
+
 export function decodeEntities(raw: string): string {
   return raw
     .replace(/&nbsp;/gi, " ")
@@ -123,6 +125,46 @@ export function extractCanonicalUrl(html: string, fallback: string): string {
     if (candidate?.startsWith("http") && !/news\.google\.com/i.test(candidate)) return candidate;
   }
   return fallback;
+}
+
+function jsonLdDate(html: string): number {
+  const blocks = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi) ?? [];
+  for (const block of blocks) {
+    const raw = block.replace(/^<script[^>]*>/i, "").replace(/<\/script>$/i, "");
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      for (const node of flattenLd(parsed)) {
+        const value = node.datePublished ?? node.dateCreated ?? node.uploadDate;
+        if (typeof value === "string") {
+          const t = parseNewsDate(value);
+          if (t) return t;
+        }
+      }
+    } catch {
+      /* skip broken json-ld */
+    }
+  }
+  return 0;
+}
+
+export function extractPublishedAt(html: string): number {
+  const keys = [
+    "article:published_time",
+    "article:published",
+    "pubdate",
+    "publishdate",
+    "datePublished",
+    "og:published_time",
+    "sailthru.date",
+  ];
+  for (const key of keys) {
+    const t = parseNewsDate(metaAttr(html, key));
+    if (t) return t;
+  }
+  const timeAttr = html.match(/<time\b[^>]*datetime=["']([^"']+)["'][^>]*>/i)?.[1];
+  const fromTime = parseNewsDate(timeAttr ?? "");
+  if (fromTime) return fromTime;
+  return jsonLdDate(html);
 }
 
 export function extractArticleText(html: string): string {

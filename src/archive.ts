@@ -1,4 +1,5 @@
 import { betterSnippet, needsKorean } from "./text";
+import { pickPublishedAt } from "./time";
 import type { NewsItem, Quote, SourcePull } from "./types";
 
 const KEY = "sihwang.archive.v1";
@@ -39,6 +40,7 @@ function combineNews(previous: NewsItem, incoming: NewsItem): NewsItem {
     title,
     titleEn,
     snippet: betterSnippet(incoming.snippet, previous.snippet, title),
+    publishedAt: pickPublishedAt(previous.publishedAt, incoming.publishedAt),
     tags: incoming.tags.length ? incoming.tags : previous.tags,
     impact: Math.max(incoming.impact, previous.impact),
     stockIds: [...new Set([...incoming.stockIds, ...previous.stockIds])],
@@ -49,7 +51,7 @@ export function pruneNews(items: NewsItem[], now = Date.now()): NewsItem[] {
   const seen = new Set<string>();
   return items
     .map(sanitizeItem)
-    .filter((item) => Number.isFinite(item.publishedAt) && now - item.publishedAt <= DAY_MS)
+    .filter((item) => item.publishedAt <= 0 || (Number.isFinite(item.publishedAt) && now - item.publishedAt <= DAY_MS))
     .sort((a, b) => b.publishedAt - a.publishedAt)
     .filter((item) => {
       const key = newsKey(item);

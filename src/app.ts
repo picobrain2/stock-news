@@ -215,7 +215,7 @@ function newsCard(item: NewsItem): string {
     <a class="card${fresh} tone-${call.tone}" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">
       <div class="card-meta">
         ${showTone ? `<span class="tone ${call.tone}">${esc(toneLabel)}</span>` : ""}
-        <span class="when">${esc(fromNow(item.publishedAt))}</span>
+        <span class="when">${item.publishedAt > 0 ? esc(fromNow(item.publishedAt)) : "시간 미상"}</span>
         <span class="dot">·</span>
         <span class="src">${esc(item.source)}</span>
         <span class="region">${item.region === "kr" ? "한국" : item.region === "us" ? "미국" : "글로벌"}</span>
