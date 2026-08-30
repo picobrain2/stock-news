@@ -1,10 +1,10 @@
 import { classifyTone } from "./impact";
-import { bundledMarket, bundledPulls, bundledQuotes, bundledStocks, bundleFetchedAt, fetchMarket, fetchQuotes, fetchStockNews, lastPulls, searchRemote } from "./api";
+import { bundledMarket, bundledPulls, bundledQuotes, bundledReview, bundledStocks, bundleFetchedAt, fetchMarket, fetchQuotes, fetchReview, fetchStockNews, lastPulls, searchRemote } from "./api";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
-import { formatPct, formatPrice, fromNow, isFresh, marketStatus } from "./time";
+import { formatDay, formatPct, formatPrice, formatRange, fromNow, isFresh, marketStatus } from "./time";
 import { cleanSnippet } from "./text";
-import type { NewsItem, Quote, SearchHit, Stock, Tab } from "./types";
+import type { NewsItem, Quote, ReviewBundle, ReviewRange, SearchHit, Stock, Tab } from "./types";
 import { loadWatchlist, saveWatchlist } from "./watchlist";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -24,6 +24,9 @@ let loadingMine = stockNews.length === 0;
 let error = "";
 let lastFetch = boot.fetchedAt;
 let sourcePulls = boot.pulls?.length ? boot.pulls : bundledPulls();
+let reviewRange: ReviewRange = "week";
+let reviewBundle: ReviewBundle = bundledReview();
+let loadingReview = !reviewBundle.week;
 let searchTimer = 0;
 
 function esc(value: string): string {
@@ -99,11 +102,74 @@ async function persist(): Promise<void> {
 
 async function refreshAll(): Promise<void> {
   error = "";
-  await Promise.all([refreshMarket(), refreshMine(), refreshQuotes()]);
+  await Promise.all([refreshMarket(), refreshMine(), refreshQuotes(), refreshReview()]);
   lastFetch = bundleFetchedAt || Date.now();
   if (lastPulls.length) sourcePulls = lastPulls;
   await persist();
   paint();
+}
+
+async function refreshReview(): Promise<void> {
+  loadingReview = true;
+  paint();
+  try {
+    reviewBundle = await fetchReview();
+  } catch {
+    /* bundled review stays */
+  } finally {
+    loadingReview = false;
+    paint();
+  }
+}
+
+function reviewPane(): string {
+  const packed = reviewBundle[reviewRange];
+  const label = reviewRange === "week" ? "지난 일주일" : reviewRange === "month" ? "지난 한 달" : "지난 1년";
+  if (loadingReview && !packed) return skeleton();
+  if (!packed || (packed.timeline.length === 0 && packed.themes.length === 0)) {
+    return `<div class="empty">${esc(label)} 정리를 아직 못 모았습니다. 약 10분마다 다시 만듭니다.</div>`;
+  }
+  const toneClass = (tone: string) => (tone === "up" ? "up" : tone === "down" ? "down" : "mixed");
+  return `
+    <p class="lead">${esc(label)} (${esc(formatRange(packed.from, packed.to))}) 경제 흐름과 주요 사건을 모아 두었습니다.</p>
+    <section class="review-hero">
+      <h2>흐름</h2>
+      <p>${esc(packed.headline)}</p>
+    </section>
+    ${packed.themes.length ? `
+      <h2 class="feed-label">주제별 정리</h2>
+      <div class="themes">${packed.themes.map((theme) => `
+        <article class="theme">
+          <div class="theme-head">
+            <strong>${esc(theme.tag)}</strong>
+            <span class="tone ${toneClass(theme.tone)}">${theme.tone === "up" ? "호재" : theme.tone === "down" ? "악재" : "혼조"}</span>
+            <span class="muted">${theme.count}건</span>
+          </div>
+          <p>${esc(theme.summary)}</p>
+          <ul>${theme.events.map((ev) => `
+            <li><a href="${esc(ev.url)}" target="_blank" rel="noopener noreferrer">${esc(ev.title)}</a></li>
+          `).join("")}</ul>
+        </article>
+      `).join("")}</div>
+    ` : ""}
+    ${packed.timeline.length ? `
+      <h2 class="feed-label">주요 사건</h2>
+      <ol class="timeline">${packed.timeline.map((ev) => `
+        <li>
+          <a class="card" href="${esc(ev.url)}" target="_blank" rel="noopener noreferrer">
+            <div class="card-meta">
+              <span class="when">${ev.publishedAt ? esc(formatDay(ev.publishedAt)) : ""}</span>
+              <span class="dot">·</span>
+              <span class="src">${esc(ev.source)}</span>
+              ${ev.tags.slice(0, 2).map((t) => `<span class="tag">${esc(t)}</span>`).join("")}
+            </div>
+            <h3>${esc(ev.title)}</h3>
+            ${ev.snippet ? `<p class="summary">${esc(ev.snippet)}</p>` : ""}
+          </a>
+        </li>
+      `).join("")}</ol>
+    ` : ""}
+  `;
 }
 
 function sourcePullsHTML(): string {
@@ -258,7 +324,7 @@ function paint(): void {
   const selStart = keepSearch ? active.selectionStart : null;
   const selEnd = keepSearch ? active.selectionEnd : null;
   const status = marketStatus();
-  const loading = tab === "market" ? loadingMarket : loadingMine;
+  const loading = tab === "review" ? loadingReview : tab === "market" ? loadingMarket : loadingMine;
   const news = visibleNews();
   const { spotlight, rest } = splitFeed(news);
   const pop = popularStocks().filter((s) => !watchlist.some((w) => w.id === s.id)).slice(0, 10);
@@ -307,16 +373,24 @@ function paint(): void {
           <div class="tabs">
             <button class="tab${tab === "market" ? " on" : ""}" data-tab="market">시장 속보</button>
             <button class="tab${tab === "mine" ? " on" : ""}" data-tab="mine">내 종목</button>
+            <button class="tab${tab === "review" ? " on" : ""}" data-tab="review">흐름</button>
           </div>
           <div class="top-actions">
             <div class="seg">
-              <button class="seg-btn${regionFilter === "all" ? " on" : ""}" data-region="all">전체</button>
-              <button class="seg-btn${regionFilter === "kr" ? " on" : ""}" data-region="kr">한국</button>
-              <button class="seg-btn${regionFilter === "us" ? " on" : ""}" data-region="us">미국</button>
+              ${tab === "review" ? `
+                <button class="seg-btn${reviewRange === "week" ? " on" : ""}" data-span="week">1주일</button>
+                <button class="seg-btn${reviewRange === "month" ? " on" : ""}" data-span="month">1개월</button>
+                <button class="seg-btn${reviewRange === "year" ? " on" : ""}" data-span="year">1년</button>
+              ` : `
+                <button class="seg-btn${regionFilter === "all" ? " on" : ""}" data-region="all">전체</button>
+                <button class="seg-btn${regionFilter === "kr" ? " on" : ""}" data-region="kr">한국</button>
+                <button class="seg-btn${regionFilter === "us" ? " on" : ""}" data-region="us">미국</button>
+              `}
             </div>
             <button class="ghost" data-refresh>${loading ? "불러오는 중" : "새로고침"}</button>
           </div>
         </header>
+        ${tab === "review" ? reviewPane() : `
         ${tab === "mine" ? `
           <div class="filters">
             <button class="chip${filterId === "all" ? " on" : ""}" data-filter="all">전체</button>
@@ -331,8 +405,9 @@ function paint(): void {
           ${spotlight.length ? `<h2 class="feed-label">지금 주목</h2>${spotlight.map(newsCard).join("")}` : ""}
           ${rest.length ? `${spotlight.length ? `<h2 class="feed-label">최신</h2>` : ""}${rest.map(newsCard).join("")}` : ""}
         </section>
+        `}
         <footer class="foot">
-          ${lastFetch ? `뉴스 수집 ${esc(fromNow(lastFetch))}` : ""} · 하루치 보관 · 새 소식만 추가
+          ${lastFetch ? `뉴스 수집 ${esc(fromNow(lastFetch))}` : ""} · ${tab === "review" ? "1주일 · 1개월 · 1년 정리" : "하루치 보관 · 새 소식만 추가"}
         </footer>
       </main>
     </div>
@@ -385,9 +460,16 @@ function bind(): void {
       return;
     }
     const tabBtn = t.closest<HTMLElement>("[data-tab]");
-    if (tabBtn?.dataset.tab === "market" || tabBtn?.dataset.tab === "mine") {
+    if (tabBtn?.dataset.tab === "market" || tabBtn?.dataset.tab === "mine" || tabBtn?.dataset.tab === "review") {
       tab = tabBtn.dataset.tab;
       if (tab === "market") filterId = "all";
+      paint();
+      return;
+    }
+    const spanBtn = t.closest<HTMLElement>("[data-span]");
+    if (spanBtn?.dataset.span === "week" || spanBtn?.dataset.span === "month" || spanBtn?.dataset.span === "year") {
+      reviewRange = spanBtn.dataset.span;
+      tab = "review";
       paint();
       return;
     }

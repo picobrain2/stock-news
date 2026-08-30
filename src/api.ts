@@ -1,7 +1,8 @@
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "./archive";
 import { searchSymbols } from "./feeds";
+import rawReview from "./review.json";
 import rawSnapshot from "./snapshot.json";
-import type { NewsItem, Quote, SearchHit, SourcePull, Stock } from "./types";
+import type { NewsItem, Quote, ReviewBundle, SearchHit, SourcePull, Stock } from "./types";
 
 const snapshot = rawSnapshot as unknown as {
   market: NewsItem[];
@@ -10,6 +11,8 @@ const snapshot = rawSnapshot as unknown as {
   pulls?: SourcePull[];
   fetchedAt: number;
 };
+
+const reviewSnap = rawReview as unknown as ReviewBundle;
 
 const localApi = import.meta.env.DEV;
 
@@ -40,6 +43,26 @@ export function bundledQuotes(): Quote[] {
 
 export function bundledPulls(): SourcePull[] {
   return snapshot.pulls ?? [];
+}
+
+export function bundledReview(): ReviewBundle {
+  return {
+    week: reviewSnap.week ?? null,
+    month: reviewSnap.month ?? null,
+    year: reviewSnap.year ?? null,
+    fetchedAt: reviewSnap.fetchedAt ?? 0,
+  };
+}
+
+export async function fetchReview(): Promise<ReviewBundle> {
+  if (localApi) {
+    return getJson<ReviewBundle>("/api/review");
+  }
+  try {
+    return await getJson<ReviewBundle>(dataUrl("review.json"));
+  } catch {
+    return bundledReview();
+  }
 }
 
 export async function fetchMarket(previous: NewsItem[] = []): Promise<NewsItem[]> {

@@ -1,4 +1,13 @@
+import type { ReviewRange } from "./types";
+
 const rtf = new Intl.RelativeTimeFormat("ko", { numeric: "auto" });
+
+export function rangeWindow(range: ReviewRange): { from: number; to: number; maxAgeMs: number } {
+  const to = Date.now();
+  const days = range === "week" ? 7 : range === "month" ? 30 : 365;
+  const maxAgeMs = days * 86_400_000;
+  return { from: to - maxAgeMs, to, maxAgeMs };
+}
 
 export function parseNewsDate(raw: string, now = Date.now()): number {
   const s = raw
@@ -73,6 +82,16 @@ export function formatPrice(price: number, currency: string): string {
     minimumFractionDigits: krw ? 0 : 2,
     maximumFractionDigits: krw ? 0 : 2,
   }).format(price);
+}
+
+export function formatDay(ts: number): string {
+  if (!ts) return "";
+  return new Date(ts).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric", weekday: "short" });
+}
+
+export function formatRange(from: number, to: number): string {
+  const opts: Intl.DateTimeFormatOptions = { month: "numeric", day: "numeric" };
+  return `${new Date(from).toLocaleDateString("ko-KR", opts)} – ${new Date(to).toLocaleDateString("ko-KR", opts)}`;
 }
 
 export function formatPct(pct: number): string {

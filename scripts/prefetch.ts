@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "../src/archive";
 import { defaultWatchlist, popularStocks } from "../src/catalog";
 import { enrichSnippets, getMarketNews, getQuotes, getStockNews } from "../src/feeds";
+import { buildReviewBundle } from "../src/review";
 import { translateNews } from "../src/translate";
 import type { NewsItem, Quote, SourcePull } from "../src/types";
 
@@ -67,6 +68,12 @@ async function main(): Promise<void> {
   ]);
   const quotesMerged = mergeQuotes(prevQuotes, quotes);
   const pullsMerged = mergePulls(prevPulls, fresh.pulls);
+  let reviewBundle = { week: null, month: null, year: null, fetchedAt };
+  try {
+    reviewBundle = await buildReviewBundle();
+  } catch (err) {
+    console.error("review failed", err);
+  }
   await mkdir(outDir, { recursive: true });
   const marketBody = { items: marketMerged, pulls: pullsMerged, fetchedAt };
   const stocksBody = { items: stocksMerged, fetchedAt };
@@ -74,6 +81,8 @@ async function main(): Promise<void> {
   await writeJson(new URL("market.json", outDir), marketBody);
   await writeJson(new URL("stocks.json", outDir), stocksBody);
   await writeJson(new URL("quotes.json", outDir), quotesBody);
+  await writeJson(new URL("review.json", outDir), reviewBundle);
+  await writeJson(new URL("../src/review.json", import.meta.url), reviewBundle);
   await writeJson(snapshotFile, {
     market: marketMerged,
     stocks: stocksMerged,
@@ -84,7 +93,7 @@ async function main(): Promise<void> {
   console.log(`prev market=${prevMarket.length} + new=${fresh.items.length} -> ${marketMerged.length}`);
   console.log(`prev stocks=${prevStocks.length} + new=${stockNews.length} -> ${stocksMerged.length}`);
   console.log("pulls", pullsMerged.map((p) => `${p.source}:${p.ok ? p.count : "fail"}`).join(", "));
-  console.log(`translated market=${marketMerged.filter((n) => Boolean(n.titleEn)).length} stocks=${stocksMerged.filter((n) => Boolean(n.titleEn)).length}`);
+  console.log(`review week=${reviewBundle.week?.timeline.length ?? 0} month=${reviewBundle.month?.timeline.length ?? 0} year=${reviewBundle.year?.timeline.length ?? 0}`);
 }
 
 main().catch((err: unknown) => {

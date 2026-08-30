@@ -1,6 +1,7 @@
 export type Market = "kr" | "us";
 export type Region = "kr" | "us" | "global";
-export type Tab = "market" | "mine";
+export type Tab = "market" | "mine" | "review";
+export type ReviewRange = "week" | "month" | "year";
 export type Tone = "up" | "down" | "mixed";
 
 export interface Stock {
@@ -49,4 +50,41 @@ export interface SearchHit {
   nameEn: string;
   yahoo: string;
   market: Market;
+}
+
+export interface ReviewEvent {
+  id: string;
+  title: string;
+  url: string;
+  source: string;
+  publishedAt: number;
+  snippet: string;
+  tags: string[];
+  impact: number;
+  tone: Tone;
+}
+
+export interface ReviewTheme {
+  tag: string;
+  summary: string;
+  tone: Tone;
+  count: number;
+  events: ReviewEvent[];
+}
+
+export interface PeriodReview {
+  range: ReviewRange;
+  from: number;
+  to: number;
+  headline: string;
+  themes: ReviewTheme[];
+  timeline: ReviewEvent[];
+  fetchedAt: number;
+}
+
+export interface ReviewBundle {
+  week: PeriodReview | null;
+  month: PeriodReview | null;
+  year: PeriodReview | null;
+  fetchedAt: number;
 }

@@ -1,7 +1,7 @@
 import { classifyTone, inferRegion, isMarketRelevant, isOffTopicNews, scoreImpact } from "./impact";
 import { extractArticleText, extractCanonicalUrl, extractPublishedAt, stripHtml, summarizeText } from "./text";
-import { parseNewsDate, pickPublishedAt } from "./time";
-import type { NewsItem, Quote, SearchHit, SourcePull } from "./types";
+import { parseNewsDate, pickPublishedAt, rangeWindow } from "./time";
+import type { NewsItem, Quote, SearchHit, SourcePull, ReviewRange } from "./types";
 
 const isBrowser = typeof window !== "undefined";
 
@@ -269,13 +269,13 @@ function normalizeTitle(title: string): string {
   return title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
-function mergeNews(groups: NewsItem[][]): NewsItem[] {
+function mergeNews(groups: NewsItem[][], maxAgeMs = 86_400_000): NewsItem[] {
   const seen = new Set<string>();
   const out: NewsItem[] = [];
   const now = Date.now();
   for (const item of groups.flat()) {
     if (item.title.replace(/\s+/g, "").length < 8) continue;
-    if (item.publishedAt > 0 && now - item.publishedAt > 86_400_000) continue;
+    if (item.publishedAt > 0 && now - item.publishedAt > maxAgeMs) continue;
     const key = normalizeTitle(item.title).slice(0, 80);
     if (!key || seen.has(key)) continue;
     seen.add(key);
@@ -349,6 +349,40 @@ export async function getMarketNews(): Promise<{ items: NewsItem[]; pulls: Sourc
         .slice(0, 250),
       pulls: foldPulls(pulls),
     };
+  });
+}
+
+function afterQuery(from: number): string {
+  const d = new Date(from);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `after:${y}-${m}-${day}`;
+}
+
+export async function getPeriodNews(range: ReviewRange): Promise<NewsItem[]> {
+  return cached(`period:${range}`, CACHE_MS, async () => {
+    const { maxAgeMs, from } = rangeWindow(range);
+    const when = afterQuery(from);
+    const feeds = [
+      { source: "구글 뉴스", url: googleNews(`${when} (금리 OR 연준 OR FOMC OR 환율 OR 유가 OR 관세 OR CPI)`, "kr") },
+      { source: "구글 뉴스", url: googleNews(`${when} (코스피 OR 반도체 OR 실적 OR 한국은행 OR 증시)`, "kr") },
+      { source: "구글 뉴스", url: googleNews(`${when} (Fed OR FOMC OR tariff OR CPI OR Nasdaq OR earnings OR inflation)`, "us") },
+    ];
+    const groups = await settled(
+      feeds.map(async (feed) => {
+        try {
+          return await rss(feed.url, feed.source);
+        } catch {
+          return [];
+        }
+      }),
+    );
+    const cap = range === "year" ? 140 : 100;
+    return mergeNews(groups, maxAgeMs)
+      .filter((n) => !isOffTopicNews(n.title, n.snippet))
+      .filter((n) => n.impact >= 12 || isMarketRelevant(n.title, n.snippet, n.impact))
+      .slice(0, cap);
   });
 }
 

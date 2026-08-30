@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { enrichSnippets, getMarketNews, getQuotes, getStockNews, searchSymbols, type StockQuery } from "../src/feeds";
+import { buildReviewBundle } from "../src/review";
 import { translateNews } from "../src/translate";
 
 function readStocks(url: URL): StockQuery[] {
@@ -48,6 +49,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
   }
   if (path === "/api/search") {
     json(res, { hits: await searchSymbols(url.searchParams.get("q") ?? "") });
+    return;
+  }
+  if (path === "/api/review") {
+    json(res, await buildReviewBundle());
     return;
   }
   json(res, { error: "not found" }, 404);
