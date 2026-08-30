@@ -30,7 +30,7 @@ function us(
 }
 
 export const CATALOG: Stock[] = [
-  kr("005930", "삼성전자", "Samsung Electronics", ["samsung", "삼성"], "005930.KS", true),
+  kr("005930", "삼성전자", "Samsung Electronics", ["삼전"], "005930.KS", true),
   kr("000660", "SK하이닉스", "SK hynix", ["hynix", "하이닉스"], "000660.KS", true),
   kr("373220", "LG에너지솔루션", "LG Energy Solution", ["lg엔솔", "엔솔"], "373220.KS", true),
   kr("207940", "삼성바이오로직스", "Samsung Biologics", ["삼바"], "207940.KS", true),

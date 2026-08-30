@@ -1,4 +1,4 @@
-import { classifyTone, inferRegion, isMarketRelevant, scoreImpact } from "./impact";
+import { classifyTone, inferRegion, isMarketRelevant, isOffTopicNews, scoreImpact } from "./impact";
 import { extractArticleText, extractCanonicalUrl, stripHtml, summarizeText } from "./text";
 import type { NewsItem, Quote, SearchHit, SourcePull } from "./types";
 
@@ -387,19 +387,36 @@ export interface StockQuery {
   market: "kr" | "us";
 }
 
+const WEAK_ALIAS = new Set([
+  "samsung", "삼성", "hyundai", "현대", "kia", "apple", "google", "meta", "amazon",
+  "하나", "신한", "kb", "sk", "lg", "cj", "sm", "nc", "kt", "arm",
+]);
+
 function googleQuery(stock: StockQuery, locale: "kr" | "us"): string {
-  const names = [stock.name, stock.nameEn, ...stock.aliases].filter(Boolean);
-  const quoted = [...new Set(names)].slice(0, 4).map((n) => `"${n}"`);
-  const extra = locale === "kr" ? [stock.id] : [stock.yahoo, stock.id];
-  return `when:7d (${[...quoted, ...extra].join(" OR ")})`;
+  const aliases = stock.aliases.filter((a) => a.length >= 3 && !WEAK_ALIAS.has(a.toLowerCase()));
+  const tokens = [stock.name, stock.nameEn, stock.id, ...aliases];
+  if (stock.market === "us") tokens.push(stock.yahoo);
+  const quoted = [...new Set(tokens.filter(Boolean))].slice(0, 5).map((n) => `"${n}"`);
+  const exclude = locale === "kr"
+    ? "-라이온즈 -야구 -KBO -프로야구"
+    : "-baseball -lions -KBO";
+  return `when:7d (${quoted.join(" OR ")}) ${exclude}`;
 }
 
 function mentionsStock(item: NewsItem, stock: StockQuery): boolean {
-  const text = `${item.title} ${item.snippet}`.toLowerCase();
-  const needles = [stock.id, stock.name, stock.nameEn, stock.yahoo, ...stock.aliases]
-    .map((s) => s.toLowerCase())
-    .filter((s) => s.length >= 2);
-  return needles.some((n) => text.includes(n));
+  const text = `${item.title} ${item.snippet}`;
+  const lower = text.toLowerCase();
+  if (stock.id.length >= 4 && lower.includes(stock.id.toLowerCase())) return true;
+  if (stock.name.length >= 3 && text.includes(stock.name)) return true;
+  if (stock.nameEn.length >= 5 && lower.includes(stock.nameEn.toLowerCase())) return true;
+  if (stock.market === "us") {
+    const ticker = stock.yahoo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${ticker}\\b`, "i").test(text)) return true;
+  }
+  return stock.aliases.some((alias) => {
+    if (alias.length < 3 || WEAK_ALIAS.has(alias.toLowerCase())) return false;
+    return lower.includes(alias.toLowerCase());
+  });
 }
 
 function isGenericTitle(title: string, stocks: StockQuery[]): boolean {
@@ -476,8 +493,9 @@ export async function getStockNews(stocks: StockQuery[], opts?: { light?: boolea
     });
     const tagged: NewsItem[] = [];
     for (const item of groups.flat()) {
-      const matched = stocks.filter((s) => item.stockIds.includes(s.id) || mentionsStock(item, s));
-      if (matched.length === 0 && item.stockIds.length === 0) continue;
+      if (isOffTopicNews(item.title, item.snippet)) continue;
+      const matched = stocks.filter((s) => mentionsStock(item, s));
+      if (matched.length === 0) continue;
       if (isGenericTitle(item.title, stocks)) continue;
       const ids = [...new Set([...item.stockIds, ...matched.map((s) => s.id)])];
       const names = matched.flatMap((s) => [s.name, s.nameEn, s.id, ...s.aliases]).filter(Boolean);

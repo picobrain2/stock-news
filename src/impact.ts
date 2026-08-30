@@ -53,6 +53,14 @@ export function isMarketRelevant(title: string, snippet: string, impact: number)
   return /주식|증시|stock|market|증권|투자|연준|금리|환율|실적|반도체|ai |코스피|나스닥/.test(text);
 }
 
+const SPORTS_NOISE =
+  /라이온즈|프로야구|야구장|선발투수|타율|홈런|안타|방어율|kbo\b|mlb\b|월드컵|올림픽|프로축구|k리그|축구대표|농구|nba\b|골프대회|스포츠조선|경기\s*결과/;
+
+export function isOffTopicNews(title: string, snippet = ""): boolean {
+  const text = `${title} ${snippet}`;
+  return /야구/.test(title) || SPORTS_NOISE.test(text);
+}
+
 export type Tone = "up" | "down" | "mixed";
 
 export interface ToneCall {
