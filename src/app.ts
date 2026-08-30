@@ -1,10 +1,11 @@
 import { classifyTone } from "./impact";
-import { bundledMarket, bundledPulls, bundledQuotes, bundledReview, bundledStocks, bundleFetchedAt, fetchMarket, fetchQuotes, fetchReview, fetchStockNews, lastPulls, searchRemote } from "./api";
+import { bundledMarket, bundledPulls, bundledQuotes, bundledReview, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuotes, fetchReview, fetchStockNews, lastPulls, searchRemote } from "./api";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
-import { formatDay, formatPct, formatPrice, formatRange, fromNow, isFresh, marketStatus } from "./time";
+import { sparkPath } from "./indices";
+import { formatDay, formatIndexPrice, formatPct, formatPrice, formatRange, fromNow, isFresh, marketStatus } from "./time";
 import { cleanSnippet } from "./text";
-import type { NewsItem, Quote, ReviewBundle, ReviewRange, SearchHit, Stock, Tab } from "./types";
+import type { IndexQuote, NewsItem, Quote, ReviewBundle, ReviewRange, SearchHit, Stock, Tab } from "./types";
 import { loadWatchlist, saveWatchlist } from "./watchlist";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -28,6 +29,8 @@ let reviewRange: ReviewRange = "week";
 let reviewBundle: ReviewBundle = bundledReview();
 let loadingReview = !reviewBundle.week;
 let searchTimer = 0;
+let indices: IndexQuote[] = [];
+let loadingIndices = true;
 
 function esc(value: string): string {
   return value.replace(/[&<>"']/g, (ch) => (
@@ -40,7 +43,26 @@ function stockById(id: string): Stock | undefined {
 }
 
 function quoteFor(stock: Stock): Quote | undefined {
-  return quotes.get(stock.yahoo);
+  return quotes.get(stock.yahoo)
+    ?? quotes.get(stock.yahoo.toUpperCase())
+    ?? quotes.get(stock.id)
+    ?? quotes.get(`${stock.id}.KS`)
+    ?? quotes.get(`${stock.id}.KQ`);
+}
+
+function rememberQuotes(rows: Quote[]): void {
+  quotes = new Map(rows.map((q) => [q.symbol, q]));
+}
+
+function seedQuote(stock: Stock, hit: SearchHit | Stock): void {
+  if (!("price" in hit) || hit.price == null || !Number.isFinite(hit.price)) return;
+  quotes.set(stock.yahoo, {
+    symbol: stock.yahoo,
+    price: hit.price,
+    changePct: hit.changePct ?? 0,
+    currency: hit.currency ?? (stock.market === "kr" ? "KRW" : "USD"),
+    name: stock.name,
+  });
 }
 
 function visibleNews(): NewsItem[] {
@@ -73,6 +95,7 @@ function addStock(hit: SearchHit | Stock): void {
   };
   watchlist = [stock, ...watchlist].slice(0, 16);
   saveWatchlist(watchlist);
+  seedQuote(stock, hit);
   search = "";
   suggestions = [];
   tab = "mine";
@@ -102,7 +125,7 @@ async function persist(): Promise<void> {
 
 async function refreshAll(): Promise<void> {
   error = "";
-  await Promise.all([refreshMarket(), refreshMine(), refreshQuotes(), refreshReview()]);
+  await Promise.all([refreshMarket(), refreshMine(), refreshQuotes(), refreshReview(), refreshIndices()]);
   lastFetch = bundleFetchedAt || Date.now();
   if (lastPulls.length) sourcePulls = lastPulls;
   await persist();
@@ -222,10 +245,23 @@ async function refreshMine(): Promise<void> {
 async function refreshQuotes(): Promise<void> {
   try {
     const rows = await fetchQuotes(watchlist, [...quotes.values()]);
-    quotes = new Map(rows.map((q) => [q.symbol, q]));
+    rememberQuotes(rows);
     paint();
   } catch {
     /* quotes are optional */
+  }
+}
+
+async function refreshIndices(): Promise<void> {
+  loadingIndices = indices.length === 0;
+  if (loadingIndices) paint();
+  try {
+    indices = await fetchIndices(indices);
+  } catch {
+    /* indices are optional */
+  } finally {
+    loadingIndices = false;
+    paint();
   }
 }
 
@@ -318,6 +354,28 @@ function watchRow(stock: Stock): string {
   `;
 }
 
+function indexCard(row: IndexQuote): string {
+  const tone = row.changePct > 0 ? "up" : row.changePct < 0 ? "down" : "flat";
+  const color = tone === "up" ? "var(--up)" : tone === "down" ? "var(--down)" : "var(--muted)";
+  const d = sparkPath(row.spark);
+  return `
+    <article class="index">
+      <div class="index-name">${esc(row.name)}</div>
+      <div class="index-px">${esc(formatIndexPrice(row.price))}</div>
+      <div class="${tone === "flat" ? "muted" : tone}">${esc(formatPct(row.changePct))}</div>
+      ${d ? `<svg class="spark" viewBox="0 0 140 36" preserveAspectRatio="none" aria-hidden="true"><path d="${d}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>` : `<div class="spark-gap"></div>`}
+    </article>
+  `;
+}
+
+function indexBoard(): string {
+  if (!indices.length && loadingIndices) {
+    return `<section class="board">${Array.from({ length: 8 }, () => `<article class="index sk"><div class="sk-line w40"></div><div class="sk-line"></div><div class="sk-line w70"></div></article>`).join("")}</section>`;
+  }
+  if (!indices.length) return "";
+  return `<section class="board">${indices.map(indexCard).join("")}</section>`;
+}
+
 function paint(): void {
   const active = document.activeElement;
   const keepSearch = active?.id === "q" && active instanceof HTMLInputElement;
@@ -347,7 +405,7 @@ function paint(): void {
         ${suggestions.length ? `
           <div class="suggest">
             ${suggestions.map((s) => `
-              <button class="suggest-item" data-add="${esc(s.id)}" data-yahoo="${esc(s.yahoo)}" data-name="${esc(s.name)}" data-nameen="${esc(s.nameEn)}" data-market="${s.market}">
+              <button class="suggest-item" data-add="${esc(s.id)}" data-yahoo="${esc(s.yahoo)}" data-name="${esc(s.name)}" data-nameen="${esc(s.nameEn)}" data-market="${s.market}" data-price="${s.price ?? ""}" data-changepct="${s.changePct ?? ""}" data-currency="${s.currency ?? ""}">
                 <strong>${esc(s.name)}</strong>
                 <span>${esc(s.id)} · ${s.market === "kr" ? "한국" : "미국"}</span>
               </button>
@@ -396,7 +454,7 @@ function paint(): void {
             <button class="chip${filterId === "all" ? " on" : ""}" data-filter="all">전체</button>
             ${watchlist.map((s) => `<button class="chip${filterId === s.id ? " on" : ""}" data-filter="${esc(s.id)}">${esc(s.name)}</button>`).join("")}
           </div>
-        ` : `<p class="lead">금리 · 환율 · 실적 · 지정학처럼 증시에 바로 닿을 수 있는 소식만 모아 두었습니다.</p>
+        ` : `${indexBoard()}<p class="lead">금리 · 환율 · 실적 · 지정학처럼 증시에 바로 닿을 수 있는 소식만 모아 두었습니다.</p>
           ${sourcePullsHTML()}`}
         ${error ? `<div class="banner">${esc(error)}</div>` : ""}
         <section class="feed">
@@ -440,12 +498,17 @@ function hitFromButton(btn: HTMLElement): SearchHit | undefined {
   const name = btn.dataset.name;
   const market = btn.dataset.market;
   if (!id || !yahoo || !name || (market !== "kr" && market !== "us")) return undefined;
+  const price = Number(btn.dataset.price);
+  const changePct = Number(btn.dataset.changepct);
   return {
     id,
     yahoo,
     name,
     nameEn: btn.dataset.nameen || name,
     market,
+    price: Number.isFinite(price) ? price : undefined,
+    changePct: Number.isFinite(changePct) ? changePct : undefined,
+    currency: btn.dataset.currency || undefined,
   };
 }
 

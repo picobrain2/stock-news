@@ -44,12 +44,25 @@ export interface Quote {
   name: string;
 }
 
+export interface IndexQuote {
+  id: string;
+  name: string;
+  symbol: string;
+  price: number;
+  changePct: number;
+  currency: string;
+  spark: number[];
+}
+
 export interface SearchHit {
   id: string;
   name: string;
   nameEn: string;
   yahoo: string;
   market: Market;
+  price?: number;
+  changePct?: number;
+  currency?: string;
 }
 
 export interface ReviewEvent {

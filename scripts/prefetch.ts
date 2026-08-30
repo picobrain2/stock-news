@@ -1,10 +1,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "../src/archive";
 import { defaultWatchlist, popularStocks } from "../src/catalog";
-import { enrichSnippets, getMarketNews, getQuotes, getStockNews } from "../src/feeds";
+import { enrichSnippets, getIndexBoard, getMarketNews, getQuotes, getStockNews } from "../src/feeds";
+import { mergeIndices } from "../src/indices";
 import { buildReviewBundle } from "../src/review";
 import { translateNews } from "../src/translate";
-import type { NewsItem, Quote, SourcePull } from "../src/types";
+import type { IndexQuote, NewsItem, Quote, SourcePull } from "../src/types";
 
 const outDir = new URL("../public/data/", import.meta.url);
 const snapshotFile = new URL("../src/snapshot.json", import.meta.url);
@@ -32,6 +33,17 @@ async function readLiveQuotes(): Promise<Quote[]> {
   }
 }
 
+async function readLiveIndices(): Promise<IndexQuote[]> {
+  try {
+    const res = await fetch(`${LIVE}indices.json`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { indices?: IndexQuote[] };
+    return data.indices ?? [];
+  } catch {
+    return [];
+  }
+}
+
 async function readLivePulls(): Promise<SourcePull[]> {
   try {
     const res = await fetch(`${LIVE}market.json`, { signal: AbortSignal.timeout(8000) });
@@ -52,14 +64,19 @@ async function main(): Promise<void> {
     [...defaultWatchlist(), ...popularStocks()].map((s) => [s.id, s]),
   ).values()];
   console.log(`prefetch ${stocks.length} stocks`);
-  const [prevMarket, prevStocks, prevQuotes, prevPulls, fresh, stockNews, quotes] = await Promise.all([
+  const [prevMarket, prevStocks, prevQuotes, prevPulls, prevIndices, fresh, stockNews, quotes, indices] = await Promise.all([
     readLiveNews("market.json"),
     readLiveNews("stocks.json"),
     readLiveQuotes(),
     readLivePulls(),
+    readLiveIndices(),
     getMarketNews(),
     getStockNews(stocks, { light: true }),
     getQuotes(stocks.map((s) => s.yahoo)),
+    getIndexBoard().catch((err: unknown) => {
+      console.error("indices failed", err);
+      return [] as IndexQuote[];
+    }),
   ]);
   const fetchedAt = Date.now();
   const [marketMerged, stocksMerged] = await Promise.all([
@@ -67,6 +84,7 @@ async function main(): Promise<void> {
     translateNews(await enrichSnippets(mergeNews(prevStocks, stockNews))),
   ]);
   const quotesMerged = mergeQuotes(prevQuotes, quotes);
+  const indicesMerged = mergeIndices(prevIndices, indices);
   const pullsMerged = mergePulls(prevPulls, fresh.pulls);
   let reviewBundle = { week: null, month: null, year: null, fetchedAt };
   try {
@@ -78,9 +96,11 @@ async function main(): Promise<void> {
   const marketBody = { items: marketMerged, pulls: pullsMerged, fetchedAt };
   const stocksBody = { items: stocksMerged, fetchedAt };
   const quotesBody = { quotes: quotesMerged, fetchedAt };
+  const indicesBody = { indices: indicesMerged, fetchedAt };
   await writeJson(new URL("market.json", outDir), marketBody);
   await writeJson(new URL("stocks.json", outDir), stocksBody);
   await writeJson(new URL("quotes.json", outDir), quotesBody);
+  await writeJson(new URL("indices.json", outDir), indicesBody);
   await writeJson(new URL("review.json", outDir), reviewBundle);
   await writeJson(new URL("../src/review.json", import.meta.url), reviewBundle);
   await writeJson(snapshotFile, {
@@ -92,6 +112,7 @@ async function main(): Promise<void> {
   });
   console.log(`prev market=${prevMarket.length} + new=${fresh.items.length} -> ${marketMerged.length}`);
   console.log(`prev stocks=${prevStocks.length} + new=${stockNews.length} -> ${stocksMerged.length}`);
+  console.log(`indices ${indicesMerged.map((i) => i.name).join(", ") || "none"}`);
   console.log("pulls", pullsMerged.map((p) => `${p.source}:${p.ok ? p.count : "fail"}`).join(", "));
   console.log(`review week=${reviewBundle.week?.timeline.length ?? 0} month=${reviewBundle.month?.timeline.length ?? 0} year=${reviewBundle.year?.timeline.length ?? 0}`);
 }

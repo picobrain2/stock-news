@@ -1,7 +1,8 @@
 import { classifyTone, inferRegion, isMarketRelevant, isOffTopicNews, scoreImpact } from "./impact";
+import { downsample, INDEX_SPECS, type IndexSpec } from "./indices";
 import { extractArticleText, extractCanonicalUrl, extractPublishedAt, stripHtml, summarizeText } from "./text";
 import { parseNewsDate, pickPublishedAt, rangeWindow } from "./time";
-import type { NewsItem, Quote, SearchHit, SourcePull, ReviewRange } from "./types";
+import type { IndexQuote, NewsItem, Quote, SearchHit, SourcePull, ReviewRange } from "./types";
 
 const isBrowser = typeof window !== "undefined";
 
@@ -40,39 +41,59 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 
 function proxyUrls(url: string): string[] {
   return [
-    `https://corsproxy.io/?${encodeURIComponent(url)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    `https://r.jina.ai/${url}`,
+    `https://corsproxy.org/?${encodeURIComponent(url)}`,
   ];
+}
+
+function unwrapBody(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{")) return raw;
+  try {
+    const obj = JSON.parse(trimmed) as {
+      contents?: string;
+      data?: { content?: string };
+    };
+    if (typeof obj.data?.content === "string" && obj.data.content) return obj.data.content;
+    if (typeof obj.contents === "string" && obj.contents) return obj.contents;
+  } catch {
+    return raw;
+  }
+  return raw;
 }
 
 async function fetchText(url: string, timeoutMs = 9000): Promise<string> {
   const targets = isBrowser ? proxyUrls(url) : [url];
   let lastError = "fetch failed";
   for (const target of targets) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-      try {
-        const headers: Record<string, string> = {
-          Accept: "application/rss+xml, application/xml, text/xml, application/json, */*",
-        };
-        if (!isBrowser) headers["User-Agent"] = UA;
-        const res = await fetch(target, { signal: ctrl.signal, headers });
-        if (res.status === 429 || res.status === 409) {
-          lastError = String(res.status);
-          await sleep(400 * (attempt + 1));
-          continue;
-        }
-        if (res.status >= 400 && res.status < 500) throw new Error(`${res.status} ${url}`);
-        if (!res.ok) throw new Error(`${res.status} ${url}`);
-        return await res.text();
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : String(err);
-        if (/^4\d\d\s/.test(lastError) && !isBrowser) throw err instanceof Error ? err : new Error(lastError);
-        if (attempt < 1) await sleep(250 * (attempt + 1));
-      } finally {
-        clearTimeout(timer);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const headers: Record<string, string> = {
+        Accept: "application/rss+xml, application/xml, text/xml, application/json, */*",
+      };
+      if (!isBrowser) headers["User-Agent"] = UA;
+      const res = await fetch(target, { signal: ctrl.signal, headers });
+      if (res.status === 429 || res.status === 409) {
+        lastError = String(res.status);
+        await sleep(400);
+        continue;
       }
+      if (!res.ok) {
+        lastError = `${res.status} ${url}`;
+        continue;
+      }
+      const text = unwrapBody(await res.text());
+      if (!text.trim()) {
+        lastError = "empty";
+        continue;
+      }
+      return text;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    } finally {
+      clearTimeout(timer);
     }
   }
   throw new Error(lastError);
@@ -560,10 +581,57 @@ export async function getQuotes(symbols: string[]): Promise<Quote[]> {
   const uniq = [...new Set(symbols.map((s) => s.trim()).filter(Boolean))].slice(0, 24);
   const rows = await mapLimit(uniq, 4, async (symbol) => {
     const quote = await fetchQuote(symbol);
-    await sleep(80);
+    await sleep(40);
     return quote;
   });
   return rows.filter((q): q is Quote => Boolean(q));
+}
+
+export async function getIndexBoard(): Promise<IndexQuote[]> {
+  const rows = await mapLimit(INDEX_SPECS, 3, async (spec) => {
+    const row = await fetchIndex(spec);
+    await sleep(60);
+    return row;
+  });
+  return rows.filter((row): row is IndexQuote => Boolean(row));
+}
+
+function yahooChartUrl(symbol: string, interval: string, range: string): string {
+  return `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}`;
+}
+
+function isKrSymbol(symbol: string): boolean {
+  return /\.K[SQ]$/i.test(symbol) || /^\d{6}$/.test(symbol.replace(/\.(KS|KQ)$/i, ""));
+}
+
+type YahooMeta = {
+  regularMarketPrice?: number;
+  regularMarketChangePercent?: number;
+  chartPreviousClose?: number;
+  previousClose?: number;
+  currency?: string;
+  shortName?: string;
+  longName?: string;
+};
+
+type YahooChart = {
+  chart?: {
+    result?: {
+      meta?: YahooMeta;
+      indicators?: { quote?: { close?: (number | null)[] }[] };
+    }[];
+  };
+};
+
+function yahooCloses(raw: string): { meta: YahooMeta; closes: number[] } | null {
+  const data = JSON.parse(raw) as YahooChart;
+  const result = data.chart?.result?.[0];
+  const meta = result?.meta;
+  if (!meta) return null;
+  const closes = (result?.indicators?.quote?.[0]?.close ?? []).filter(
+    (n): n is number => n != null && Number.isFinite(n),
+  );
+  return { meta, closes };
 }
 
 function naverQuoteUrls(symbol: string): string[] {
@@ -591,7 +659,7 @@ function parseNaverQuote(symbol: string, raw: string): Quote | null {
   const price = Number(String(data.closePrice).replace(/,/g, ""));
   const changePct = Number(String(data.fluctuationsRatio ?? "0").replace(/,/g, ""));
   if (!Number.isFinite(price)) return null;
-  const kr = /\.K[SQ]$/i.test(symbol) || /^\d{6}/.test(symbol);
+  const kr = isKrSymbol(symbol);
   return {
     symbol,
     price,
@@ -602,26 +670,15 @@ function parseNaverQuote(symbol: string, raw: string): Quote | null {
 }
 
 function parseYahooQuote(symbol: string, raw: string): Quote | null {
-  const data = JSON.parse(raw) as {
-    chart?: {
-      result?: {
-        meta?: {
-          regularMarketPrice?: number;
-          regularMarketChangePercent?: number;
-          currency?: string;
-          shortName?: string;
-          longName?: string;
-          chartPreviousClose?: number;
-        };
-      }[];
-    };
-  };
-  const meta = data.chart?.result?.[0]?.meta;
-  const price = meta?.regularMarketPrice;
+  const parsed = yahooCloses(raw);
+  if (!parsed) return null;
+  const { meta, closes } = parsed;
+  const price = meta?.regularMarketPrice ?? closes.at(-1);
   if (price == null) return null;
   let changePct = meta?.regularMarketChangePercent;
-  if (changePct == null && meta?.chartPreviousClose) {
-    changePct = ((price - meta.chartPreviousClose) / meta.chartPreviousClose) * 100;
+  const prev = meta?.previousClose ?? meta?.chartPreviousClose ?? closes[0];
+  if (changePct == null && prev) {
+    changePct = ((price - prev) / prev) * 100;
   }
   return {
     symbol,
@@ -634,30 +691,185 @@ function parseYahooQuote(symbol: string, raw: string): Quote | null {
 
 async function fetchQuote(symbol: string): Promise<Quote | null> {
   const hit = cache.get(`quote:${symbol}`);
-  const ttl = hit?.data ? 60_000 : 8_000;
+  const ttl = hit?.data ? 60_000 : 3_000;
   if (hit && Date.now() - hit.at < ttl) return (hit.data as Quote | null) ?? null;
 
+  const kr = isKrSymbol(symbol);
   let quote: Quote | null = null;
-  for (const url of naverQuoteUrls(symbol)) {
+
+  const fromYahoo = async (): Promise<Quote | null> => {
     try {
-      quote = parseNaverQuote(symbol, await fetchText(url, 7000));
-      if (quote) break;
+      return parseYahooQuote(symbol, await fetchText(yahooChartUrl(symbol, "1d", "5d"), 7000));
     } catch {
-      /* try next venue suffix */
+      return null;
     }
-  }
-  if (!quote) {
-    try {
-      quote = parseYahooQuote(
-        symbol,
-        await fetchText(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d`),
-      );
-    } catch {
-      quote = null;
+  };
+  const fromNaver = async (): Promise<Quote | null> => {
+    if (!kr) return null;
+    for (const url of naverQuoteUrls(symbol).slice(0, 2)) {
+      try {
+        const row = parseNaverQuote(symbol, await fetchText(url, 5000));
+        if (row) return row;
+      } catch {
+        /* next */
+      }
     }
+    return null;
+  };
+
+  if (isBrowser || !kr) {
+    quote = (await fromYahoo()) ?? (await fromNaver());
+  } else {
+    quote = (await fromNaver()) ?? (await fromYahoo());
   }
   cache.set(`quote:${symbol}`, { at: Date.now(), data: quote });
   return quote;
+}
+
+async function fetchIndex(spec: IndexSpec): Promise<IndexQuote | null> {
+  const hit = cache.get(`index:${spec.symbol}`);
+  if (hit && Date.now() - hit.at < 60_000) return (hit.data as IndexQuote | null) ?? null;
+  let row: IndexQuote | null = null;
+  if (spec.naver) {
+    try {
+      row = await fetchNaverIndex(spec);
+    } catch {
+      row = null;
+    }
+  }
+  if (!row) row = await fetchYahooIndex(spec);
+  cache.set(`index:${spec.symbol}`, { at: Date.now(), data: row });
+  return row;
+}
+
+function num(raw: unknown): number {
+  const n = Number(String(raw ?? "").replace(/,/g, "").replace(/%/g, "").trim());
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function sparkFrom(price: number, changePct: number, closes: number[]): number[] {
+  const series = closes.filter((n) => Number.isFinite(n));
+  if (series.length >= 2) return downsample(series, 56);
+  const prev = changePct !== 0 ? price / (1 + changePct / 100) : price;
+  return downsample([prev, price], 8);
+}
+
+function packIndex(spec: IndexSpec, price: number, changePct: number, currency: string, closes: number[]): IndexQuote | null {
+  if (!Number.isFinite(price)) return null;
+  return {
+    id: spec.id,
+    name: spec.name,
+    symbol: spec.symbol,
+    price,
+    changePct: Number.isFinite(changePct) ? changePct : 0,
+    currency,
+    spark: sparkFrom(price, changePct, closes),
+  };
+}
+
+async function fetchNaverIndex(spec: IndexSpec): Promise<IndexQuote | null> {
+  const src = spec.naver;
+  if (!src) return null;
+  if (src.kind === "kr") {
+    const basic = JSON.parse(await fetchText(`https://m.stock.naver.com/api/index/${src.code}/basic`, 6000)) as {
+      closePrice?: string;
+      fluctuationsRatio?: string;
+    };
+    const hist = JSON.parse(
+      await fetchText(`https://m.stock.naver.com/api/index/${src.code}/price?pageSize=40&timeFrame=day`, 6000),
+    ) as { closePrice?: string }[];
+    const closes = [...hist].reverse().map((row) => num(row.closePrice)).filter((n) => Number.isFinite(n));
+    return packIndex(spec, num(basic.closePrice), num(basic.fluctuationsRatio), "KRW", closes);
+  }
+  if (src.kind === "world") {
+    const basic = JSON.parse(await fetchText(`https://api.stock.naver.com/index/${src.code}/basic`, 6000)) as {
+      closePrice?: string;
+      fluctuationsRatio?: string;
+    };
+    const chart = JSON.parse(
+      await fetchText(`https://api.stock.naver.com/chart/foreign/index/${src.code}?periodType=day&count=5`, 8000),
+    ) as { lastClosePrice?: number; priceInfos?: { currentPrice?: number }[] };
+    const closes = (chart.priceInfos ?? []).map((row) => num(row.currentPrice)).filter((n) => Number.isFinite(n));
+    return packIndex(spec, num(basic.closePrice) || num(chart.lastClosePrice), num(basic.fluctuationsRatio), "USD", closes);
+  }
+  if (src.kind === "fx") {
+    const data = JSON.parse(await fetchText(`https://api.stock.naver.com/marketindex/exchange/${src.code}`, 6000)) as {
+      exchangeInfo?: { closePrice?: string; fluctuationsRatio?: string };
+    };
+    const info = data.exchangeInfo ?? {};
+    let closes: number[] = [];
+    try {
+      const html = await fetchText(`https://finance.naver.com/marketindex/exchangeDailyQuote.naver?marketindexCd=${src.code}`, 6000);
+      closes = [...html.matchAll(/<tr class="(?:up|down)">([\s\S]*?)<\/tr>/g)]
+        .map((row) => {
+          const first = row[1].match(/<td class="num">\s*([\d,.]+)/);
+          return first ? num(first[1]) : NaN;
+        })
+        .filter((n) => Number.isFinite(n))
+        .reverse();
+    } catch {
+      closes = [];
+    }
+    return packIndex(spec, num(info.closePrice), num(info.fluctuationsRatio), "KRW", closes);
+  }
+  if (src.kind === "oil") {
+    const html = await fetchText(
+      `https://finance.naver.com/marketindex/worldOilDetail.naver?marketindexCd=${src.code}&fdtc=2`,
+      7000,
+    );
+    const price = parseNaverOilPrice(html);
+    const changePct = parseNaverOilChangePct(html);
+    if (price == null) return null;
+    return packIndex(spec, price, changePct ?? 0, "USD", []);
+  }
+  return null;
+}
+
+function parseNaverOilPrice(html: string): number | null {
+  const before = html.match(/([\s\S]{0,800})class="txt_barrel"/);
+  const source = before?.[1] ?? html;
+  const ems = [...source.matchAll(/<em class="no_(?:up|down|same)">([\s\S]*?)<\/em>/g)];
+  const last = ems.at(-1);
+  return last ? parseNaverDigits(last[1]) : null;
+}
+
+function parseNaverOilChangePct(html: string): number | null {
+  const ems = [...html.matchAll(/<em class="no_(up|down|same)">([\s\S]*?)<\/em>/g)];
+  for (const em of ems) {
+    if (!em[2].includes("per")) continue;
+    const n = parseNaverDigits(em[2]);
+    if (n == null) continue;
+    return em[1] === "down" || em[2].includes("minus") ? -Math.abs(n) : Math.abs(n);
+  }
+  return null;
+}
+
+function parseNaverDigits(html: string): number | null {
+  let s = "";
+  for (const m of html.matchAll(/class="(no\d|jum)"/g)) {
+    s += m[1] === "jum" ? "." : m[1].slice(2);
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function fetchYahooIndex(spec: IndexSpec): Promise<IndexQuote | null> {
+  let parsed: ReturnType<typeof yahooCloses> = null;
+  for (const [interval, range] of [["15m", "5d"], ["1d", "1mo"]] as const) {
+    try {
+      parsed = yahooCloses(await fetchText(yahooChartUrl(spec.symbol, interval, range), 8000));
+      if (parsed && (parsed.closes.length >= 2 || parsed.meta.regularMarketPrice != null)) break;
+    } catch {
+      parsed = null;
+    }
+  }
+  if (!parsed) return null;
+  const { meta, closes } = parsed;
+  const price = meta.regularMarketPrice ?? closes.at(-1);
+  if (price == null) return null;
+  const prev = meta.previousClose ?? meta.chartPreviousClose ?? closes[0];
+  const changePct = meta.regularMarketChangePercent ?? (prev ? ((price - prev) / prev) * 100 : 0);
+  return packIndex(spec, price, changePct, meta.currency ?? "", closes);
 }
 
 export async function searchSymbols(query: string): Promise<SearchHit[]> {
@@ -675,6 +887,8 @@ export async function searchSymbols(query: string): Promise<SearchHit[]> {
           longname?: string;
           quoteType?: string;
           exchDisp?: string;
+          regularMarketPrice?: number;
+          regularMarketChangePercent?: number;
         }[];
       };
       return (data.quotes ?? [])
@@ -684,12 +898,17 @@ export async function searchSymbols(query: string): Promise<SearchHit[]> {
           const kr = yahoo.endsWith(".KS") || yahoo.endsWith(".KQ");
           const id = kr ? yahoo.replace(/\.(KS|KQ)$/i, "") : yahoo;
           const name = x.shortname || x.longname || yahoo;
+          const price = Number(x.regularMarketPrice);
+          const changePct = Number(x.regularMarketChangePercent);
           return {
             id,
             name,
             nameEn: x.longname || name,
             yahoo,
             market: kr ? "kr" as const : "us" as const,
+            price: Number.isFinite(price) ? price : undefined,
+            changePct: Number.isFinite(changePct) ? changePct : undefined,
+            currency: kr ? "KRW" : "USD",
           };
         });
     } catch {

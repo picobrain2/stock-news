@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { enrichSnippets, getMarketNews, getQuotes, getStockNews, searchSymbols, type StockQuery } from "../src/feeds";
+import { enrichSnippets, getIndexBoard, getMarketNews, getQuotes, getStockNews, searchSymbols, type StockQuery } from "../src/feeds";
 import { buildReviewBundle } from "../src/review";
 import { translateNews } from "../src/translate";
 
@@ -45,6 +45,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
   if (path === "/api/quotes") {
     const symbols = (url.searchParams.get("s") ?? "").split(",").filter(Boolean);
     json(res, { quotes: await getQuotes(symbols) });
+    return;
+  }
+  if (path === "/api/indices") {
+    json(res, { indices: await getIndexBoard() });
     return;
   }
   if (path === "/api/search") {

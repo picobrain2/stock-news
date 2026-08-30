@@ -84,6 +84,13 @@ export function formatPrice(price: number, currency: string): string {
   }).format(price);
 }
 
+export function formatIndexPrice(price: number): string {
+  return new Intl.NumberFormat("ko-KR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(price);
+}
+
 export function formatDay(ts: number): string {
   if (!ts) return "";
   return new Date(ts).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric", weekday: "short" });

@@ -1,8 +1,9 @@
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "./archive";
-import { getQuotes, searchSymbols } from "./feeds";
+import { getIndexBoard, getQuotes, searchSymbols } from "./feeds";
+import { mergeIndices } from "./indices";
 import rawReview from "./review.json";
 import rawSnapshot from "./snapshot.json";
-import type { NewsItem, Quote, ReviewBundle, SearchHit, SourcePull, Stock } from "./types";
+import type { IndexQuote, NewsItem, Quote, ReviewBundle, SearchHit, SourcePull, Stock } from "./types";
 
 const snapshot = rawSnapshot as unknown as {
   market: NewsItem[];
@@ -113,17 +114,40 @@ export async function fetchQuotes(stocks: Stock[], previous: Quote[] = []): Prom
     const data = await getJson<{ quotes: Quote[] }>(`/api/quotes?s=${encodeURIComponent(s)}`);
     return mergeQuotes(rows, take(data.quotes ?? []));
   }
+  let fromFile: Quote[] = [];
   try {
     const data = await getJson<{ quotes: Quote[] }>(dataUrl("quotes.json"));
-    rows = mergeQuotes(rows, take(data.quotes ?? []));
+    fromFile = take(data.quotes ?? []);
+    rows = mergeQuotes(rows, fromFile);
   } catch {
-    rows = mergeQuotes(rows, take(bundledQuotes()));
+    fromFile = take(bundledQuotes());
+    rows = mergeQuotes(rows, fromFile);
   }
-  const have = new Set(rows.map((q) => q.symbol));
+  const have = new Set(fromFile.map((q) => q.symbol));
   const missing = stocks.map((s) => s.yahoo).filter((symbol) => !have.has(symbol));
   if (missing.length === 0) return rows;
   try {
     return mergeQuotes(rows, take(await getQuotes(missing)));
+  } catch {
+    return rows;
+  }
+}
+
+export async function fetchIndices(previous: IndexQuote[] = []): Promise<IndexQuote[]> {
+  if (localApi) {
+    const data = await getJson<{ indices: IndexQuote[] }>("/api/indices");
+    return mergeIndices(previous, data.indices ?? []);
+  }
+  let rows = previous;
+  try {
+    const data = await getJson<{ indices?: IndexQuote[] }>(dataUrl("indices.json"));
+    rows = mergeIndices(rows, data.indices ?? []);
+  } catch {
+    /* live fill below */
+  }
+  if (rows.length >= 6) return rows;
+  try {
+    return mergeIndices(rows, await getIndexBoard());
   } catch {
     return rows;
   }
