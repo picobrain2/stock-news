@@ -78,7 +78,7 @@ function addStock(hit: SearchHit | Stock): void {
   tab = "mine";
   filterId = stock.id;
   void refreshMine();
-  void refreshQuotes();
+  void refreshQuotes().then(() => persist());
   paint();
 }
 

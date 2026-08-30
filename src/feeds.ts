@@ -558,9 +558,9 @@ export async function getStockNews(stocks: StockQuery[], opts?: { light?: boolea
 
 export async function getQuotes(symbols: string[]): Promise<Quote[]> {
   const uniq = [...new Set(symbols.map((s) => s.trim()).filter(Boolean))].slice(0, 24);
-  const rows = await mapLimit(uniq, 1, async (symbol) => {
+  const rows = await mapLimit(uniq, 4, async (symbol) => {
     const quote = await fetchQuote(symbol);
-    await sleep(120);
+    await sleep(80);
     return quote;
   });
   return rows.filter((q): q is Quote => Boolean(q));

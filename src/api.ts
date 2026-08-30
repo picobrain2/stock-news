@@ -1,5 +1,5 @@
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "./archive";
-import { searchSymbols } from "./feeds";
+import { getQuotes, searchSymbols } from "./feeds";
 import rawReview from "./review.json";
 import rawSnapshot from "./snapshot.json";
 import type { NewsItem, Quote, ReviewBundle, SearchHit, SourcePull, Stock } from "./types";
@@ -106,17 +106,26 @@ export async function fetchStockNews(stocks: Stock[], previous: NewsItem[] = [])
 export async function fetchQuotes(stocks: Stock[], previous: Quote[] = []): Promise<Quote[]> {
   if (stocks.length === 0) return [];
   const wanted = new Set(stocks.map((s) => s.yahoo));
-  const pick = (rows: Quote[]) => rows.filter((q) => wanted.has(q.symbol));
+  const take = (rows: Quote[]) => rows.filter((q) => wanted.has(q.symbol));
+  let rows = take(previous);
   if (localApi) {
     const s = stocks.map((x) => x.yahoo).join(",");
     const data = await getJson<{ quotes: Quote[] }>(`/api/quotes?s=${encodeURIComponent(s)}`);
-    return mergeQuotes(previous, pick(data.quotes ?? []));
+    return mergeQuotes(rows, take(data.quotes ?? []));
   }
   try {
     const data = await getJson<{ quotes: Quote[] }>(dataUrl("quotes.json"));
-    return mergeQuotes(previous, pick(data.quotes ?? []));
+    rows = mergeQuotes(rows, take(data.quotes ?? []));
   } catch {
-    return mergeQuotes(previous, pick(bundledQuotes()));
+    rows = mergeQuotes(rows, take(bundledQuotes()));
+  }
+  const have = new Set(rows.map((q) => q.symbol));
+  const missing = stocks.map((s) => s.yahoo).filter((symbol) => !have.has(symbol));
+  if (missing.length === 0) return rows;
+  try {
+    return mergeQuotes(rows, take(await getQuotes(missing)));
+  } catch {
+    return rows;
   }
 }
 
