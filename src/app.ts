@@ -1,5 +1,6 @@
 import { classifyTone } from "./impact";
-import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStockDetail, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuotes, fetchReview, fetchStockDetail, fetchStockNews, lastPulls, searchRemote } from "./api";
+import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStockDetail, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuoteQuick, fetchQuotes, fetchReview, fetchStockDetail, fetchStockNews, lastPulls, searchRemote } from "./api";
+import { detailFromQuote } from "./naverStock";
 import { INDEX_REFRESH_MS } from "./feeds";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
@@ -332,6 +333,17 @@ async function refreshStockDetail(): Promise<void> {
   }
   loadingStockDetail = true;
   paint();
+  if (!seeded && !quoteFor(stock)) {
+    void fetchQuoteQuick(stock).then((q) => {
+      if (!q || gen !== stockDetailGen || filterId !== stock.id) return;
+      quotes.set(stock.yahoo, q);
+      if (stockDetailFor !== stock.id || !stockDetail?.stats.length) {
+        stockDetail = detailFromQuote(stock, q);
+        stockDetailFor = stock.id;
+        paint();
+      }
+    });
+  }
   try {
     const detail = await fetchStockDetail(stock);
     if (gen !== stockDetailGen || filterId !== stock.id) return;
@@ -451,28 +463,22 @@ function stockDetailPanel(): string {
   const stock = stockById(filterId);
   if (!stock) return "";
   const matched = stockDetailFor === filterId ? stockDetail : null;
-  if (loadingStockDetail && !matched) {
-    return `<section class="stock-hero sk"><div class="sk-line w40"></div><div class="sk-line"></div><div class="sk-line w70"></div></section>`;
-  }
   const q: StockDetail | null = matched ?? (() => {
     const hit = quoteFor(stock);
     if (!hit) return null;
-    return {
-      id: stock.id,
-      name: hit.name || stock.name,
-      price: hit.price,
-      changePct: hit.changePct,
-      currency: hit.currency,
-      exchange: stock.market === "kr" ? "한국" : "미국",
-      stats: [],
-      naverUrl: "",
-    };
+    return detailFromQuote(stock, hit);
   })();
-  if (!q) return "";
+  if (!q) {
+    if (loadingStockDetail) {
+      return `<section class="stock-hero sk"><div class="sk-line w40"></div><div class="sk-line"></div><div class="sk-line w70"></div></section>`;
+    }
+    return "";
+  }
+  const pending = loadingStockDetail && !matched?.stats.length;
   const tone = q.changePct > 0 ? "up" : q.changePct < 0 ? "down" : "muted";
   const change = q.change ? ` (${q.change})` : "";
   return `
-    <section class="stock-hero">
+    <section class="stock-hero${pending ? " pending" : ""}">
       <div class="stock-hero-head">
         <div>
           <h2>${esc(q.name)}</h2>
@@ -484,6 +490,7 @@ function stockDetailPanel(): string {
         <span class="px-big">${esc(formatPrice(q.price, q.currency))}</span>
         <span class="${tone}">${esc(formatPct(q.changePct))}${esc(change)}</span>
       </div>
+      ${pending ? `<p class="stock-pending muted">지표 불러오는 중…</p>` : ""}
       ${q.targetPrice ? `<div class="stock-target">목표가 <strong>${esc(q.targetPrice)}</strong>${q.recommend ? ` · 컨센서스 ${esc(q.recommend)}` : ""}</div>` : ""}
       ${q.stats.length ? `
         <div class="stock-stats">

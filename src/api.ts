@@ -1,6 +1,6 @@
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "./archive";
 import { fetchText, getIndexBoard, getQuotes, searchSymbols } from "./feeds";
-import { getStockDetail } from "./naverStock";
+import { detailFromQuote, getStockDetail } from "./naverStock";
 import { mergeIndices } from "./indices";
 import rawReview from "./review.json";
 import rawSnapshot from "./snapshot.json";
@@ -131,7 +131,7 @@ export async function fetchQuotes(stocks: Stock[], previous: Quote[] = [], live 
     rows = mergeQuotes(rows, fromFile);
   }
   if (!live) return rows;
-  const have = new Set(fromFile.map((q) => q.symbol));
+  const have = new Set(rows.map((q) => q.symbol));
   const missing = stocks.map((s) => s.yahoo).filter((symbol) => !have.has(symbol));
   if (missing.length === 0) return rows;
   try {
@@ -166,6 +166,15 @@ export function bundledStockDetail(id: string): StockDetail | undefined {
   return snapshot.stockDetails?.[id];
 }
 
+export async function fetchQuoteQuick(stock: Stock): Promise<Quote | null> {
+  try {
+    const rows = await getQuotes([stock.yahoo]);
+    return rows[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchStockDetail(stock: Stock): Promise<StockDetail | null> {
   if (localApi) {
     const q = new URLSearchParams({
@@ -177,13 +186,14 @@ export async function fetchStockDetail(stock: Stock): Promise<StockDetail | null
     const data = await getJson<{ detail: StockDetail | null }>(`/api/stock-detail?${q}`);
     return data.detail ?? null;
   }
-  try {
-    const live = await getStockDetail(stock, fetchText);
-    if (live) return live;
-  } catch {
-    /* fall back to prefetch */
-  }
   const cached = bundledStockDetail(stock.id);
+  const yahooQuick = stock.market === "us"
+    ? fetchQuoteQuick(stock)
+    : Promise.resolve(null);
+  const naverLive = getStockDetail(stock, fetchText).catch(() => null);
+  const [live, yahooQ] = await Promise.all([naverLive, yahooQuick]);
+  if (live) return live;
+  if (yahooQ) return detailFromQuote(stock, yahooQ);
   if (cached) return cached;
   try {
     const data = await getJson<{ details?: Record<string, StockDetail> }>(dataUrl("details.json"));

@@ -62,14 +62,14 @@ async function writeJson(url: URL, body: unknown): Promise<void> {
 
 async function prefetchStockDetails(stockList: Stock[]): Promise<Record<string, StockDetail>> {
   const details: Record<string, StockDetail> = {};
-  for (const stock of stockList) {
+  await Promise.all(stockList.map(async (stock) => {
     try {
       const row = await getStockDetail(stock, fetchText);
       if (row) details[stock.id] = row;
     } catch (err) {
       console.error(`detail failed ${stock.id}`, err);
     }
-  }
+  }));
   return details;
 }
 
@@ -130,6 +130,7 @@ async function main(): Promise<void> {
   });
   console.log(`prev market=${prevMarket.length} + new=${fresh.items.length} -> ${marketMerged.length}`);
   console.log(`prev stocks=${prevStocks.length} + new=${stockNews.length} -> ${stocksMerged.length}`);
+  console.log(`quotes ${quotesMerged.length} symbols, details ${Object.keys(stockDetails).length}`);
   console.log(`indices ${indicesMerged.map((i) => i.name).join(", ") || "none"}`);
   console.log("pulls", pullsMerged.map((p) => `${p.source}:${p.ok ? p.count : "fail"}`).join(", "));
   console.log(`review week=${reviewBundle.week?.timeline.length ?? 0} month=${reviewBundle.month?.timeline.length ?? 0} year=${reviewBundle.year?.timeline.length ?? 0}`);

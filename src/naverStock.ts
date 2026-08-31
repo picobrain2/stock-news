@@ -1,4 +1,4 @@
-import type { Stock, StockDetail, StockStat } from "./types";
+import type { Quote, Stock, StockDetail, StockStat } from "./types";
 
 type NaverBasic = {
   stockName?: string;
@@ -69,6 +69,20 @@ function pickStats(rows: NaverInfo[]): StockStat[] {
   return [...ordered, ...[...map.values()].filter((row) => !seen.has(row.label))].slice(0, 10);
 }
 
+export function detailFromQuote(stock: Stock, quote: Quote): StockDetail {
+  const { code, kr } = naverCode(stock);
+  return {
+    id: stock.id,
+    name: quote.name || stock.name,
+    price: quote.price,
+    changePct: quote.changePct,
+    currency: quote.currency,
+    exchange: stock.market === "kr" ? "한국" : "미국",
+    stats: [],
+    naverUrl: naverPageUrl(code, kr),
+  };
+}
+
 export async function getStockDetail(
   stock: Stock,
   fetchText: (url: string, timeoutMs?: number) => Promise<string>,
@@ -81,15 +95,15 @@ export async function getStockDetail(
     ? `https://m.stock.naver.com/api/stock/${code}/integration`
     : `https://api.stock.naver.com/stock/${code}/integration`;
 
-  let basicRaw = "";
-  try {
-    basicRaw = await fetchText(basicUrl, 5500);
-  } catch {
-    return null;
-  }
+  const [basicResult, integResult] = await Promise.allSettled([
+    fetchText(basicUrl, 5500),
+    fetchText(integUrl, 5500),
+  ]);
+  if (basicResult.status !== "fulfilled") return null;
+
   let basic: NaverBasic;
   try {
-    basic = JSON.parse(basicRaw) as NaverBasic;
+    basic = JSON.parse(basicResult.value) as NaverBasic;
   } catch {
     return null;
   }
@@ -97,10 +111,12 @@ export async function getStockDetail(
   if (!Number.isFinite(price)) return null;
 
   let integration: NaverIntegration = {};
-  try {
-    integration = JSON.parse(await fetchText(integUrl, 5500)) as NaverIntegration;
-  } catch {
-    /* basic only */
+  if (integResult.status === "fulfilled") {
+    try {
+      integration = JSON.parse(integResult.value) as NaverIntegration;
+    } catch {
+      /* basic only */
+    }
   }
 
   const currency = basic.currencyType?.code ?? (kr ? "KRW" : "USD");
