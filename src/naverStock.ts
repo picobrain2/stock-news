@@ -83,6 +83,29 @@ export function detailFromQuote(stock: Stock, quote: Quote): StockDetail {
   };
 }
 
+export function mergeStockDetail(base: StockDetail, patch: StockDetail): StockDetail {
+  return {
+    ...base,
+    ...patch,
+    targetPrice: patch.targetPrice ?? base.targetPrice,
+    recommend: patch.recommend ?? base.recommend,
+    stats: patch.stats.length ? patch.stats : base.stats,
+    exchange: patch.exchange || base.exchange,
+    naverUrl: patch.naverUrl || base.naverUrl,
+    change: patch.change ?? base.change,
+  };
+}
+
+export function applyQuoteToDetail(detail: StockDetail, quote: Quote): StockDetail {
+  return {
+    ...detail,
+    price: quote.price,
+    changePct: quote.changePct,
+    name: quote.name || detail.name,
+    currency: quote.currency || detail.currency,
+  };
+}
+
 export async function getStockDetail(
   stock: Stock,
   fetchText: (url: string, timeoutMs?: number) => Promise<string>,

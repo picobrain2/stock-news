@@ -1,6 +1,6 @@
 import { classifyTone } from "./impact";
 import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStockDetail, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuoteQuick, fetchQuotes, fetchReview, fetchStockDetail, fetchStockNews, lastPulls, searchRemote } from "./api";
-import { detailFromQuote } from "./naverStock";
+import { detailFromQuote, mergeStockDetail } from "./naverStock";
 import { INDEX_REFRESH_MS } from "./feeds";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
@@ -371,7 +371,10 @@ async function refreshStockDetail(): Promise<void> {
       if (!q || gen !== stockDetailGen || filterId !== stock.id) return;
       storeQuote(stock, q);
       if (stockDetailFor !== stock.id || !stockDetail?.stats.length) {
-        stockDetail = detailFromQuote(stock, q);
+        const next = detailFromQuote(stock, q);
+        stockDetail = stockDetail && stockDetailFor === stock.id
+          ? mergeStockDetail(stockDetail, next)
+          : next;
         stockDetailFor = stock.id;
         paint();
       }
@@ -381,7 +384,9 @@ async function refreshStockDetail(): Promise<void> {
     const detail = await fetchStockDetail(stock);
     if (gen !== stockDetailGen || filterId !== stock.id) return;
     if (detail && detail.price > 0) {
-      stockDetail = detail;
+      stockDetail = stockDetail && stockDetailFor === stock.id
+        ? mergeStockDetail(stockDetail, detail)
+        : detail;
       stockDetailFor = stock.id;
       storeQuote(stock, {
         symbol: stock.yahoo,

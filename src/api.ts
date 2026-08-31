@@ -1,6 +1,6 @@
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "./archive";
 import { fetchText, getIndexBoard, getQuotes, searchSymbols } from "./feeds";
-import { detailFromQuote, getStockDetail } from "./naverStock";
+import { applyQuoteToDetail, detailFromQuote, getStockDetail } from "./naverStock";
 import { mergeIndices } from "./indices";
 import rawReview from "./review.json";
 import rawSnapshot from "./snapshot.json";
@@ -195,10 +195,12 @@ export async function fetchStockDetail(stock: Stock): Promise<StockDetail | null
   }
   const cached = bundledStockDetail(stock.id);
   if (stock.market === "us") {
-    const yahooQ = await fetchQuoteQuick(stock);
+    const [live, yahooQ] = await Promise.all([
+      getStockDetail(stock, fetchText).catch(() => null),
+      fetchQuoteQuick(stock),
+    ]);
+    if (live) return yahooQ ? applyQuoteToDetail(live, yahooQ) : live;
     if (yahooQ) return detailFromQuote(stock, yahooQ);
-    const live = await getStockDetail(stock, fetchText).catch(() => null);
-    if (live) return live;
   } else {
     const live = await getStockDetail(stock, fetchText).catch(() => null);
     if (live) return live;
