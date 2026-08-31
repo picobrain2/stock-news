@@ -66,22 +66,42 @@ function downsampleSeries(values: number[], times: number[] | undefined, max = 4
 }
 
 function sparkQuality(row: IndexQuote): number {
-  if (row.spark.length < 3 || row.sparkAt?.length !== row.spark.length) {
-    return row.spark.length >= 3 ? 1 : 0;
-  }
+  if (!row.spark?.length) return 0;
+  if (row.spark.length < 3) return row.spark.length;
+  if (row.sparkAt?.length && row.sparkAt.length !== row.spark.length) return 1;
   const uniq = new Set(row.spark.map((v) => v.toFixed(2))).size;
   return row.spark.length + (uniq > 1 ? 20 : 0);
 }
 
 export function mergeIndexQuote(prev: IndexQuote | undefined, incoming: IndexQuote): IndexQuote {
   if (!prev) return incoming;
-  if (sparkQuality(incoming) >= sparkQuality(prev)) return incoming;
+  const prevQ = sparkQuality(prev);
+  const incQ = sparkQuality(incoming);
+  if (incQ <= 0 && prevQ > 0) {
+    return {
+      ...incoming,
+      spark: prev.spark,
+      sparkAt: prev.sparkAt,
+      sparkTz: prev.sparkTz ?? incoming.sparkTz,
+    };
+  }
+  if (incQ >= prevQ) return incoming;
   return {
     ...incoming,
     spark: prev.spark,
     sparkAt: prev.sparkAt,
-    sparkTz: prev.sparkTz,
+    sparkTz: prev.sparkTz ?? incoming.sparkTz,
   };
+}
+
+function synthesizeSparkTimes(values: number[], session: "kr" | "us", now = Date.now()): number[] {
+  const { tz: sessionTz, open, close } = SESSION_BOUNDS[session];
+  const today = dateKeyInTimeZone(now, sessionTz);
+  const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
+  const start = tsAtSessionMinute(today, open, sessionTz);
+  const end = openNow ? now : tsAtSessionMinute(today, close, sessionTz);
+  if (values.length <= 1) return [start, end];
+  return values.map((_, i) => start + ((end - start) * i) / (values.length - 1));
 }
 
 export interface SparkChart {
@@ -104,30 +124,34 @@ export function buildSparkChart(
   session: "kr" | "us" = "kr",
   now = Date.now(),
 ): SparkChart | null {
-  if (!times?.length || times.length !== values.length || values.length < 3) return null;
-  const sampled = downsampleSeries(values, times, 40);
+  if (values.length < 2) return null;
+  let stampTimes = times?.length === values.length ? times : undefined;
+  if (!stampTimes) {
+    if (values.length < 3) return null;
+    stampTimes = synthesizeSparkTimes(values, session, now);
+  }
+  const sampled = downsampleSeries(values, stampTimes, 40);
   const nums = sampled.values;
-  const stampTimes = sampled.times;
-  if (!stampTimes?.length || nums.length < 3) return null;
+  const seriesTimes = sampled.times;
+  if (!seriesTimes?.length || nums.length < 2) return null;
 
   const { tz: sessionTz, open, close } = SESSION_BOUNDS[session];
-  const tradeDate = dateKeyInTimeZone(stampTimes[stampTimes.length - 1]!, sessionTz);
+  const tradeDate = dateKeyInTimeZone(seriesTimes[seriesTimes.length - 1]!, sessionTz);
   const sessionStart = tsAtSessionMinute(tradeDate, open, sessionTz);
   const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
   const today = dateKeyInTimeZone(now, sessionTz);
   const sessionEnd = openNow && tradeDate === today
-    ? Math.max(now, stampTimes[stampTimes.length - 1]!)
+    ? Math.max(now, seriesTimes[seriesTimes.length - 1]!)
     : tsAtSessionMinute(tradeDate, close, sessionTz);
   const timeSpan = sessionEnd - sessionStart || 1;
 
   const min = Math.min(...nums);
   const max = Math.max(...nums);
-  if (max - min === 0 && nums.length < 6) return null;
   const span = max - min || 1;
   const padY = 5;
   const innerH = height - padY * 2;
   const points = nums.map((v, i) => ({
-    x: Math.max(0, Math.min(width, ((stampTimes[i]! - sessionStart) / timeSpan) * width)),
+    x: Math.max(0, Math.min(width, ((seriesTimes[i]! - sessionStart) / timeSpan) * width)),
     y: padY + innerH - ((v - min) / span) * innerH,
   }));
   const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");

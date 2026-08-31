@@ -44,8 +44,18 @@ let stockDetailFor = "";
 let loadingStockDetail = false;
 let stockDetailGen = 0;
 const stickyQuotes = new Map<string, Quote>();
+const stickyIndexSpark = new Map<string, Pick<IndexQuote, "spark" | "sparkAt" | "sparkTz">>();
 const stickyDetails = new Map<string, StockDetail>();
 let quotesRefresh: Promise<void> | null = null;
+
+function indexRowForCard(row: IndexQuote): IndexQuote {
+  const sticky = stickyIndexSpark.get(row.id);
+  if (!sticky) return row;
+  const hasLive = row.spark.length >= 3 && (row.sparkAt?.length ?? 0) >= 3;
+  if (hasLive) return row;
+  if ((sticky.spark?.length ?? 0) >= (row.spark?.length ?? 0)) return { ...row, ...sticky };
+  return row;
+}
 
 function rememberStockDetail(stock: Stock, incoming: StockDetail): StockDetail {
   const prev = stickyDetails.get(stock.id);
@@ -344,13 +354,29 @@ function shouldPollIndices(): boolean {
   return (tab === "market" || tab === "mine") && document.visibilityState === "visible";
 }
 
+function rememberIndexSpark(rows: IndexQuote[]): void {
+  for (const row of rows) {
+    const session = indexSession(row.id);
+    const chart = buildSparkChart(row.spark, 180, 58, row.sparkAt, session);
+    if (chart && row.spark.length >= 2) {
+      stickyIndexSpark.set(row.id, {
+        spark: row.spark,
+        sparkAt: row.sparkAt,
+        sparkTz: row.sparkTz,
+      });
+    }
+  }
+}
+
 async function refreshIndices(): Promise<void> {
   try {
     if (!indices.length) {
       indices = await fetchIndices([], false);
+      rememberIndexSpark(indices);
       paint();
     }
     indices = await fetchIndices(indices, true);
+    rememberIndexSpark(indices);
   } catch {
     /* indices are optional */
   } finally {
@@ -567,13 +593,23 @@ function stockDetailPanel(): string {
 function indexCard(row: IndexQuote): string {
   const tone = row.changePct > 0 ? "up" : row.changePct < 0 ? "down" : "flat";
   const color = tone === "up" ? "var(--up)" : tone === "down" ? "var(--down)" : "var(--muted)";
-  const chart = buildSparkChart(
-    row.spark,
-    180,
-    58,
-    row.sparkAt,
-    indexSession(row.id),
-  );
+  const session = indexSession(row.id);
+  let cardRow = indexRowForCard(row);
+  let chart = buildSparkChart(cardRow.spark, 180, 58, cardRow.sparkAt, session);
+  if (!chart) {
+    const sticky = stickyIndexSpark.get(row.id);
+    if (sticky) {
+      cardRow = { ...row, ...sticky };
+      chart = buildSparkChart(cardRow.spark, 180, 58, cardRow.sparkAt, session);
+    }
+  }
+  if (chart && cardRow.spark.length >= 2) {
+    stickyIndexSpark.set(row.id, {
+      spark: cardRow.spark,
+      sparkAt: cardRow.sparkAt,
+      sparkTz: cardRow.sparkTz,
+    });
+  }
   const gradId = `spark-${row.id}`;
   const chartBlock = chart ? `
     <div class="index-chart">
@@ -597,7 +633,7 @@ function indexCard(row: IndexQuote): string {
         <span class="spark-date end">${esc(chart.labels.end)}</span>
       </div>
     </div>
-  ` : `<div class="spark-gap"><span class="muted">차트 없음</span></div>`;
+  ` : `<div class="spark-gap spark-pending"><span class="muted">차트 불러오는 중</span></div>`;
   return `
     <article class="index tone-${tone}">
       <div class="index-top">
@@ -629,6 +665,10 @@ function paint(): void {
   const keepSearch = active?.id === "q" && active instanceof HTMLInputElement;
   const selStart = keepSearch ? active.selectionStart : null;
   const selEnd = keepSearch ? active.selectionEnd : null;
+  const scrollMain = app.querySelector<HTMLElement>(".main");
+  const scrollSide = app.querySelector<HTMLElement>(".side");
+  const mainScrollTop = scrollMain?.scrollTop ?? 0;
+  const sideScrollTop = scrollSide?.scrollTop ?? 0;
   const status = marketStatus();
   const loading = tab === "review" ? loadingReview : tab === "market" ? loadingMarket : loadingMine;
   const news = visibleNews();
@@ -730,6 +770,11 @@ function paint(): void {
     input?.focus();
     if (input && selStart != null && selEnd != null) input.setSelectionRange(selStart, selEnd);
   }
+
+  const nextMain = app.querySelector<HTMLElement>(".main");
+  const nextSide = app.querySelector<HTMLElement>(".side");
+  if (nextMain) nextMain.scrollTop = mainScrollTop;
+  if (nextSide) nextSide.scrollTop = sideScrollTop;
 }
 
 function skeleton(): string {

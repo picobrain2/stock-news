@@ -1,6 +1,6 @@
 import { isGoogleNewsBoilerplate, isGoogleNewsUrl, resolveGoogleNewsUrl } from "./googleNews";
 import { classifyTone, inferRegion, isMarketRelevant, isOffTopicNews, scoreImpact } from "./impact";
-import { INDEX_SPECS, indexSession, SESSION_BOUNDS, DISPLAY_TZ, type IndexSpec } from "./indices";
+import { INDEX_SPECS, indexSession, SESSION_BOUNDS, DISPLAY_TZ, mergeIndexQuote, type IndexSpec } from "./indices";
 import { extractArticleText, extractPublishedAt, stripHtml, summarizeText } from "./text";
 import { dateKeyInTimeZone, isKrMarketOpen, isUsMarketOpen, minutesInTimeZone, parseNewsDate, pickPublishedAt, rangeWindow, tsAtSessionMinute } from "./time";
 import type { IndexQuote, NewsItem, Quote, SearchHit, SourcePull, ReviewRange } from "./types";
@@ -888,6 +888,7 @@ async function fetchQuote(symbol: string): Promise<Quote | null> {
 async function fetchIndex(spec: IndexSpec): Promise<IndexQuote | null> {
   const hit = cache.get(`index:${spec.symbol}`);
   if (hit && Date.now() - hit.at < INDEX_CACHE_MS) return (hit.data as IndexQuote | null) ?? null;
+  const prev = (hit?.data as IndexQuote | null) ?? null;
   let row: IndexQuote | null = null;
   if (spec.naver) {
     try {
@@ -897,6 +898,7 @@ async function fetchIndex(spec: IndexSpec): Promise<IndexQuote | null> {
     }
   }
   if (!row) row = await fetchYahooIndex(spec);
+  if (row && prev) row = mergeIndexQuote(prev, row);
   cache.set(`index:${spec.symbol}`, { at: Date.now(), data: row });
   return row;
 }
