@@ -1,5 +1,5 @@
 import type { IndexQuote } from "./types";
-import { formatSparkTime } from "./time";
+import { formatSparkTime, isKrMarketOpen, isUsMarketOpen, tsAtSessionMinute, dateKeyInTimeZone } from "./time";
 
 export type NaverIndex =
   | { kind: "kr"; code: string }
@@ -29,6 +29,8 @@ export function indexSession(id: string): "kr" | "us" {
   if (id === "kospi" || id === "kosdaq" || id === "usdkrw") return "kr";
   return "us";
 }
+
+export const DISPLAY_TZ = "Asia/Seoul";
 
 export const SESSION_BOUNDS = {
   kr: { tz: "Asia/Seoul", open: 9 * 60, close: 15 * 60 + 30 },
@@ -63,11 +65,23 @@ function downsampleSeries(values: number[], times: number[] | undefined, max = 4
   return { values: outV, times: outT.length ? outT : undefined };
 }
 
-function sessionOpenLabel(session: "kr" | "us"): string {
-  const { open } = SESSION_BOUNDS[session];
-  const h = Math.floor(open / 60);
-  const m = open % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+function sparkQuality(row: IndexQuote): number {
+  if (row.spark.length < 3 || row.sparkAt?.length !== row.spark.length) {
+    return row.spark.length >= 3 ? 1 : 0;
+  }
+  const uniq = new Set(row.spark.map((v) => v.toFixed(2))).size;
+  return row.spark.length + (uniq > 1 ? 20 : 0);
+}
+
+export function mergeIndexQuote(prev: IndexQuote | undefined, incoming: IndexQuote): IndexQuote {
+  if (!prev) return incoming;
+  if (sparkQuality(incoming) >= sparkQuality(prev)) return incoming;
+  return {
+    ...incoming,
+    spark: prev.spark,
+    sparkAt: prev.sparkAt,
+    sparkTz: prev.sparkTz,
+  };
 }
 
 export interface SparkChart {
@@ -87,37 +101,47 @@ export function buildSparkChart(
   width = 180,
   height = 58,
   times?: number[],
-  tz = "Asia/Seoul",
   session: "kr" | "us" = "kr",
+  now = Date.now(),
 ): SparkChart | null {
+  if (!times?.length || times.length !== values.length || values.length < 3) return null;
   const sampled = downsampleSeries(values, times, 40);
   const nums = sampled.values;
-  if (nums.length < 2) return null;
+  const stampTimes = sampled.times;
+  if (!stampTimes?.length || nums.length < 3) return null;
+
+  const { tz: sessionTz, open, close } = SESSION_BOUNDS[session];
+  const tradeDate = dateKeyInTimeZone(stampTimes[stampTimes.length - 1]!, sessionTz);
+  const sessionStart = tsAtSessionMinute(tradeDate, open, sessionTz);
+  const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
+  const today = dateKeyInTimeZone(now, sessionTz);
+  const sessionEnd = openNow && tradeDate === today
+    ? Math.max(now, stampTimes[stampTimes.length - 1]!)
+    : tsAtSessionMinute(tradeDate, close, sessionTz);
+  const timeSpan = sessionEnd - sessionStart || 1;
+
   const min = Math.min(...nums);
   const max = Math.max(...nums);
+  if (max - min === 0 && nums.length < 6) return null;
   const span = max - min || 1;
   const padY = 5;
   const innerH = height - padY * 2;
   const points = nums.map((v, i) => ({
-    x: (i / (nums.length - 1)) * width,
+    x: Math.max(0, Math.min(width, ((stampTimes[i]! - sessionStart) / timeSpan) * width)),
     y: padY + innerH - ((v - min) / span) * innerH,
   }));
   const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
-  const area = `${line} L${width.toFixed(1)} ${height} L0 ${height} Z`;
+  const area = `${line} L${points[points.length - 1]!.x.toFixed(1)} ${height} L${points[0]!.x.toFixed(1)} ${height} Z`;
   const last = points[points.length - 1]!;
-  const stampTimes = sampled.times;
-  const startLabel = stampTimes?.length
-    ? formatSparkTime(stampTimes[0]!, tz)
-    : sessionOpenLabel(session);
-  const endLabel = stampTimes?.length
-    ? formatSparkTime(stampTimes[stampTimes.length - 1]!, tz)
-    : "현재";
   return {
     line,
     area,
     width,
     height,
-    labels: { start: startLabel, end: endLabel },
+    labels: {
+      start: formatSparkTime(sessionStart, DISPLAY_TZ),
+      end: formatSparkTime(sessionEnd, DISPLAY_TZ),
+    },
     min,
     max,
     lastX: last.x,
@@ -128,6 +152,6 @@ export function buildSparkChart(
 export function mergeIndices(previous: IndexQuote[], incoming: IndexQuote[]): IndexQuote[] {
   const map = new Map<string, IndexQuote>();
   for (const row of previous) map.set(row.id, row);
-  for (const row of incoming) map.set(row.id, row);
+  for (const row of incoming) map.set(row.id, mergeIndexQuote(map.get(row.id), row));
   return INDEX_SPECS.map((spec) => map.get(spec.id)).filter((row): row is IndexQuote => Boolean(row));
 }

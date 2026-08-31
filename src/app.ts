@@ -572,7 +572,6 @@ function indexCard(row: IndexQuote): string {
     180,
     58,
     row.sparkAt,
-    row.sparkTz ?? "Asia/Seoul",
     indexSession(row.id),
   );
   const gradId = `spark-${row.id}`;

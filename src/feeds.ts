@@ -1,8 +1,8 @@
 import { isGoogleNewsBoilerplate, isGoogleNewsUrl, resolveGoogleNewsUrl } from "./googleNews";
 import { classifyTone, inferRegion, isMarketRelevant, isOffTopicNews, scoreImpact } from "./impact";
-import { INDEX_SPECS, indexSession, SESSION_BOUNDS, type IndexSpec } from "./indices";
+import { INDEX_SPECS, indexSession, SESSION_BOUNDS, DISPLAY_TZ, type IndexSpec } from "./indices";
 import { extractArticleText, extractPublishedAt, stripHtml, summarizeText } from "./text";
-import { dateKeyInTimeZone, isKrMarketOpen, isUsMarketOpen, minutesInTimeZone, parseNewsDate, pickPublishedAt, rangeWindow } from "./time";
+import { dateKeyInTimeZone, isKrMarketOpen, isUsMarketOpen, minutesInTimeZone, parseNewsDate, pickPublishedAt, rangeWindow, tsAtSessionMinute } from "./time";
 import type { IndexQuote, NewsItem, Quote, SearchHit, SourcePull, ReviewRange } from "./types";
 
 const isBrowser = typeof window !== "undefined";
@@ -724,7 +724,26 @@ export function filterIntradaySession(points: IntradayPoint[], session: "kr" | "
   if (openNow && tradeDate === today) {
     day = day.filter((p) => p.t <= now);
   }
-  return day.length >= 2 ? day : points.slice(-2);
+  return day.length >= 3 ? day : [];
+}
+
+function padSessionSeries(points: IntradayPoint[], session: "kr" | "us", now = Date.now()): IntradayPoint[] {
+  if (points.length < 3) return points;
+  const { tz, open, close } = SESSION_BOUNDS[session];
+  const tradeDate = dateKeyInTimeZone(points[points.length - 1]!.t, tz);
+  const openTs = tsAtSessionMinute(tradeDate, open, tz);
+  const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
+  const today = dateKeyInTimeZone(now, tz);
+  const endTs = openNow && tradeDate === today ? now : tsAtSessionMinute(tradeDate, close, tz);
+  let out = [...points];
+  if (out[0]!.t > openTs + 60_000) {
+    out.unshift({ t: openTs, v: out[0]!.v });
+  }
+  const last = out[out.length - 1]!;
+  if (last.t < endTs - 30_000) {
+    out.push({ t: endTs, v: last.v });
+  }
+  return out;
 }
 
 function downsampleIntraday(points: IntradayPoint[], max = 56): IntradayPoint[] {
@@ -742,13 +761,13 @@ async function fetchIntradaySeries(spec: IndexSpec, alt?: IntradayPoint[]): Prom
   try {
     const raw = await fetchText(yahooChartUrl(spec.symbol, "5m", "1d"), 8000);
     const filtered = filterIntradaySession(yahooIntraday(raw), session);
-    if (filtered.length >= 2) return downsampleIntraday(filtered, 56);
+    if (filtered.length >= 3) return downsampleIntraday(padSessionSeries(filtered, session), 56);
   } catch {
     /* fall through */
   }
-  if (alt && alt.length >= 2) {
+  if (alt && alt.length >= 3) {
     const filtered = filterIntradaySession(alt, session);
-    if (filtered.length >= 2) return downsampleIntraday(filtered, 56);
+    if (filtered.length >= 3) return downsampleIntraday(padSessionSeries(filtered, session), 56);
   }
   return [];
 }
@@ -887,21 +906,15 @@ function num(raw: unknown): number {
   return Number.isFinite(n) ? n : NaN;
 }
 
-function sparkFallback(price: number, changePct: number): { spark: number[] } {
-  const prev = changePct !== 0 ? price / (1 + changePct / 100) : price;
-  return { spark: [prev, price] };
-}
-
 function packIndex(spec: IndexSpec, price: number, changePct: number, currency: string, series: IntradayPoint[]): IndexQuote | null {
   if (!Number.isFinite(price)) return null;
-  const session = indexSession(spec.id);
-  const sparkPack = series.length >= 2
+  const sparkPack = series.length >= 3
     ? {
         spark: series.map((p) => p.v),
         sparkAt: series.map((p) => p.t),
-        sparkTz: SESSION_BOUNDS[session].tz,
+        sparkTz: DISPLAY_TZ,
       }
-    : sparkFallback(price, changePct);
+    : { spark: [] as number[], sparkAt: undefined, sparkTz: DISPLAY_TZ };
   return {
     id: spec.id,
     name: spec.name,
