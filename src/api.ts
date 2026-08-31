@@ -1,9 +1,10 @@
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "./archive";
-import { getQuotes, searchSymbols } from "./feeds";
+import { fetchText, getQuotes, searchSymbols } from "./feeds";
+import { getStockDetail } from "./naverStock";
 import { mergeIndices } from "./indices";
 import rawReview from "./review.json";
 import rawSnapshot from "./snapshot.json";
-import type { IndexQuote, NewsItem, Quote, ReviewBundle, SearchHit, SourcePull, Stock } from "./types";
+import type { IndexQuote, NewsItem, Quote, ReviewBundle, SearchHit, SourcePull, Stock, StockDetail } from "./types";
 
 const snapshot = rawSnapshot as unknown as {
   market: NewsItem[];
@@ -151,6 +152,20 @@ export async function fetchIndices(previous: IndexQuote[] = []): Promise<IndexQu
   } catch {
     return seed;
   }
+}
+
+export async function fetchStockDetail(stock: Stock): Promise<StockDetail | null> {
+  if (localApi) {
+    const q = new URLSearchParams({
+      id: stock.id,
+      yahoo: stock.yahoo,
+      market: stock.market,
+      name: stock.name,
+    });
+    const data = await getJson<{ detail: StockDetail | null }>(`/api/stock-detail?${q}`);
+    return data.detail ?? null;
+  }
+  return getStockDetail(stock, fetchText);
 }
 
 export async function searchRemote(query: string): Promise<SearchHit[]> {

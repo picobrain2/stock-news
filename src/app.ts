@@ -1,11 +1,11 @@
 import { classifyTone } from "./impact";
-import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuotes, fetchReview, fetchStockNews, lastPulls, searchRemote } from "./api";
+import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuotes, fetchReview, fetchStockDetail, fetchStockNews, lastPulls, searchRemote } from "./api";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
 import { sparkPath } from "./indices";
 import { formatDay, formatIndexPrice, formatPct, formatPrice, formatRange, fromNow, isFresh, marketStatus } from "./time";
 import { cleanSnippet } from "./text";
-import type { IndexQuote, NewsItem, Quote, ReviewBundle, ReviewRange, SearchHit, Stock, Tab } from "./types";
+import type { IndexQuote, NewsItem, Quote, ReviewBundle, ReviewRange, SearchHit, Stock, StockDetail, Tab } from "./types";
 import { loadWatchlist, saveWatchlist } from "./watchlist";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -33,9 +33,27 @@ let indices: IndexQuote[] = boot.indices?.length ? boot.indices : bundledIndices
 let loadingIndices = indices.length === 0;
 type MobilePane = "news" | "watch";
 let mobilePane: MobilePane = "news";
+let stockDetail: StockDetail | null = null;
+let stockDetailFor = "";
+let loadingStockDetail = false;
 
 function showNewsPane(): void {
   mobilePane = "news";
+}
+
+function selectStock(id: string): void {
+  filterId = id;
+  tab = "mine";
+  showNewsPane();
+  void refreshStockDetail();
+  paint();
+}
+
+function clearStockFilter(): void {
+  filterId = "all";
+  stockDetail = null;
+  stockDetailFor = "";
+  loadingStockDetail = false;
 }
 
 function esc(value: string): string {
@@ -108,6 +126,7 @@ function addStock(hit: SearchHit | Stock): void {
   filterId = stock.id;
   showNewsPane();
   void refreshMine();
+  void refreshStockDetail();
   void refreshQuotes().then(() => persist());
   paint();
 }
@@ -115,7 +134,7 @@ function addStock(hit: SearchHit | Stock): void {
 function removeStock(id: string): void {
   watchlist = watchlist.filter((s) => s.id !== id);
   saveWatchlist(watchlist);
-  if (filterId === id) filterId = "all";
+  if (filterId === id) clearStockFilter();
   void refreshMine();
   paint();
 }
@@ -275,6 +294,40 @@ async function refreshIndices(): Promise<void> {
   }
 }
 
+async function refreshStockDetail(): Promise<void> {
+  if (filterId === "all") {
+    stockDetail = null;
+    stockDetailFor = "";
+    loadingStockDetail = false;
+    return;
+  }
+  const stock = stockById(filterId);
+  if (!stock) return;
+  if (stockDetailFor === stock.id && stockDetail) return;
+  loadingStockDetail = true;
+  paint();
+  try {
+    const detail = await fetchStockDetail(stock);
+    stockDetail = detail;
+    stockDetailFor = stock.id;
+    if (detail) {
+      quotes.set(stock.yahoo, {
+        symbol: stock.yahoo,
+        price: detail.price,
+        changePct: detail.changePct,
+        currency: detail.currency,
+        name: detail.name,
+      });
+    }
+  } catch {
+    stockDetail = null;
+    stockDetailFor = "";
+  } finally {
+    loadingStockDetail = false;
+    paint();
+  }
+}
+
 async function onSearchInput(value: string): Promise<void> {
   search = value;
   window.clearTimeout(searchTimer);
@@ -361,6 +414,57 @@ function watchRow(stock: Stock): string {
       </div>
       <button class="icon-btn" data-remove="${esc(stock.id)}" title="빼기" aria-label="${esc(stock.name)} 빼기">×</button>
     </div>
+  `;
+}
+
+function stockDetailPanel(): string {
+  const stock = stockById(filterId);
+  if (!stock) return "";
+  if (loadingStockDetail && !stockDetail) {
+    return `<section class="stock-hero sk"><div class="sk-line w40"></div><div class="sk-line"></div><div class="sk-line w70"></div></section>`;
+  }
+  const q: StockDetail | null = stockDetail ?? (() => {
+    const hit = quoteFor(stock);
+    if (!hit) return null;
+    return {
+      id: stock.id,
+      name: hit.name || stock.name,
+      price: hit.price,
+      changePct: hit.changePct,
+      currency: hit.currency,
+      exchange: stock.market === "kr" ? "한국" : "미국",
+      stats: [],
+      naverUrl: "",
+    };
+  })();
+  if (!q) return "";
+  const tone = q.changePct > 0 ? "up" : q.changePct < 0 ? "down" : "muted";
+  const change = q.change ? ` (${q.change})` : "";
+  return `
+    <section class="stock-hero">
+      <div class="stock-hero-head">
+        <div>
+          <h2>${esc(q.name)}</h2>
+          <div class="muted">${esc(stock.id)} · ${esc(q.exchange)}</div>
+        </div>
+        ${q.naverUrl ? `<a class="ghost stock-link" href="${esc(q.naverUrl)}" target="_blank" rel="noopener noreferrer">네이버증권</a>` : ""}
+      </div>
+      <div class="stock-hero-px">
+        <span class="px-big">${esc(formatPrice(q.price, q.currency))}</span>
+        <span class="${tone}">${esc(formatPct(q.changePct))}${esc(change)}</span>
+      </div>
+      ${q.targetPrice ? `<div class="stock-target">목표가 <strong>${esc(q.targetPrice)}</strong>${q.recommend ? ` · 컨센서스 ${esc(q.recommend)}` : ""}</div>` : ""}
+      ${q.stats.length ? `
+        <div class="stock-stats">
+          ${q.stats.map((row) => `
+            <div class="stat">
+              <span>${esc(row.label)}</span>
+              <strong>${esc(row.value)}</strong>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
+    </section>
   `;
 }
 
@@ -464,6 +568,7 @@ function paint(): void {
             <button class="chip${filterId === "all" ? " on" : ""}" data-filter="all">전체</button>
             ${watchlist.map((s) => `<button class="chip${filterId === s.id ? " on" : ""}" data-filter="${esc(s.id)}">${esc(s.name)}</button>`).join("")}
           </div>
+          ${filterId !== "all" ? stockDetailPanel() : ""}
         ` : `${indexBoard()}<p class="lead">금리 · 환율 · 실적 · 지정학처럼 증시에 바로 닿을 수 있는 소식만 모아 두었습니다.</p>
           ${sourcePullsHTML()}`}
         ${error ? `<div class="banner">${esc(error)}</div>` : ""}
@@ -532,7 +637,7 @@ function bind(): void {
     const home = t.closest<HTMLElement>("[data-home]");
     if (home) {
       tab = "market";
-      filterId = "all";
+      clearStockFilter();
       showNewsPane();
       paint();
       return;
@@ -546,7 +651,7 @@ function bind(): void {
     const tabBtn = t.closest<HTMLElement>("[data-tab]");
     if (tabBtn?.dataset.tab === "market" || tabBtn?.dataset.tab === "mine" || tabBtn?.dataset.tab === "review") {
       tab = tabBtn.dataset.tab;
-      if (tab === "market") filterId = "all";
+      if (tab === "market") clearStockFilter();
       showNewsPane();
       paint();
       return;
@@ -585,18 +690,20 @@ function bind(): void {
     }
     const filter = t.closest<HTMLElement>("[data-filter]");
     if (filter?.dataset.filter) {
-      filterId = filter.dataset.filter;
-      tab = "mine";
+      if (filter.dataset.filter === "all") {
+        clearStockFilter();
+        tab = "mine";
+      } else {
+        selectStock(filter.dataset.filter);
+        return;
+      }
       showNewsPane();
       paint();
       return;
     }
     const open = t.closest<HTMLElement>("[data-open]");
     if (open?.dataset.open) {
-      tab = "mine";
-      filterId = open.dataset.open;
-      showNewsPane();
-      paint();
+      selectStock(open.dataset.open);
     }
   });
 

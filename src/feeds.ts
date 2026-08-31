@@ -81,7 +81,7 @@ async function fetchVia(target: string, timeoutMs: number): Promise<string> {
   }
 }
 
-async function fetchText(url: string, timeoutMs = 5000): Promise<string> {
+export async function fetchText(url: string, timeoutMs = 5000): Promise<string> {
   if (!isBrowser) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);

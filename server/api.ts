@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { enrichSnippets, getIndexBoard, getMarketNews, getQuotes, getStockNews, searchSymbols, type StockQuery } from "../src/feeds";
+import { enrichSnippets, fetchText, getIndexBoard, getMarketNews, getQuotes, getStockNews, searchSymbols, type StockQuery } from "../src/feeds";
+import { getStockDetail } from "../src/naverStock";
 import { buildReviewBundle } from "../src/review";
 import { translateNews } from "../src/translate";
 
@@ -57,6 +58,22 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
   }
   if (path === "/api/review") {
     json(res, await buildReviewBundle());
+    return;
+  }
+  if (path === "/api/stock-detail") {
+    const id = url.searchParams.get("id") ?? "";
+    const yahoo = url.searchParams.get("yahoo") ?? "";
+    const market = url.searchParams.get("market");
+    const name = url.searchParams.get("name") ?? id;
+    if (!id || !yahoo || (market !== "kr" && market !== "us")) {
+      json(res, { detail: null });
+      return;
+    }
+    const detail = await getStockDetail(
+      { id, yahoo, name, nameEn: name, aliases: [], market, popular: false },
+      fetchText,
+    );
+    json(res, { detail });
     return;
   }
   json(res, { error: "not found" }, 404);

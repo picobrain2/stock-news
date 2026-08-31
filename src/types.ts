@@ -65,6 +65,25 @@ export interface SearchHit {
   currency?: string;
 }
 
+export interface StockStat {
+  label: string;
+  value: string;
+}
+
+export interface StockDetail {
+  id: string;
+  name: string;
+  price: number;
+  changePct: number;
+  change?: string;
+  currency: string;
+  exchange: string;
+  stats: StockStat[];
+  targetPrice?: string;
+  recommend?: string;
+  naverUrl: string;
+}
+
 export interface ReviewEvent {
   id: string;
   title: string;
