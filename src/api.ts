@@ -130,15 +130,21 @@ export async function fetchQuotes(stocks: Stock[], previous: Quote[] = [], live 
     fromFile = take(bundledQuotes());
     rows = mergeQuotes(rows, fromFile);
   }
-  if (!live) return rows.filter((q) => q.price > 0);
-  const have = new Set(rows.filter((q) => q.price > 0).map((q) => q.symbol));
-  const missing = stocks.map((s) => s.yahoo).filter((symbol) => !have.has(symbol));
-  if (missing.length === 0) return rows.filter((q) => q.price > 0);
-  try {
-    return mergeQuotes(rows, take(await getQuotes(missing))).filter((q) => q.price > 0);
-  } catch {
-    return rows.filter((q) => q.price > 0);
+  if (!live) return mergeQuotes(previous, rows).filter((q) => q.price > 0 && wanted.has(q.symbol));
+  const have = new Set<string>();
+  for (const q of [...rows, ...previous]) {
+    if (q.price > 0 && wanted.has(q.symbol)) have.add(q.symbol);
   }
+  const missing = stocks.map((s) => s.yahoo).filter((symbol) => !have.has(symbol));
+  let result = rows.filter((q) => q.price > 0);
+  if (missing.length > 0) {
+    try {
+      result = mergeQuotes(rows, take(await getQuotes(missing))).filter((q) => q.price > 0);
+    } catch {
+      result = rows.filter((q) => q.price > 0);
+    }
+  }
+  return mergeQuotes(previous, result).filter((q) => q.price > 0 && wanted.has(q.symbol));
 }
 
 export async function fetchIndices(previous: IndexQuote[] = [], live = true): Promise<IndexQuote[]> {

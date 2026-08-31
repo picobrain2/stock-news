@@ -25,6 +25,8 @@ function goodQuote(q: Quote | null | undefined): q is Quote {
   return Boolean(q && Number.isFinite(q.price) && q.price > 0);
 }
 
+const quoteInflight = new Map<string, Promise<Quote | null>>();
+
 function cached<T>(key: string, ttl: number, load: () => Promise<T>): Promise<T> {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < ttl) return Promise.resolve(hit.data as T);
@@ -732,10 +734,13 @@ function parseYahooQuote(symbol: string, raw: string): Quote | null {
   };
 }
 
-async function fetchQuote(symbol: string): Promise<Quote | null> {
+async function fetchQuoteOnce(symbol: string): Promise<Quote | null> {
   const hit = cache.get(`quote:${symbol}`);
-  const ttl = hit?.data ? 60_000 : 3_000;
-  if (hit && Date.now() - hit.at < ttl) return (hit.data as Quote | null) ?? null;
+  if (hit) {
+    const cached = hit.data as Quote | null;
+    const ttl = goodQuote(cached) ? 60_000 : 3_000;
+    if (Date.now() - hit.at < ttl) return goodQuote(cached) ? cached : null;
+  }
 
   const kr = isKrSymbol(symbol);
   let quote: Quote | null = null;
@@ -762,8 +767,18 @@ async function fetchQuote(symbol: string): Promise<Quote | null> {
 
   quote = (await fromNaver()) ?? (await fromYahoo());
   if (!goodQuote(quote)) quote = null;
-  cache.set(`quote:${symbol}`, { at: Date.now(), data: quote });
-  return quote;
+  if (goodQuote(quote) || !goodQuote(hit?.data as Quote | null)) {
+    cache.set(`quote:${symbol}`, { at: Date.now(), data: quote });
+  }
+  return quote ?? (goodQuote(hit?.data as Quote | null) ? hit!.data as Quote : null);
+}
+
+async function fetchQuote(symbol: string): Promise<Quote | null> {
+  const pending = quoteInflight.get(symbol);
+  if (pending) return pending;
+  const job = fetchQuoteOnce(symbol).finally(() => quoteInflight.delete(symbol));
+  quoteInflight.set(symbol, job);
+  return job;
 }
 
 async function fetchIndex(spec: IndexSpec): Promise<IndexQuote | null> {

@@ -43,6 +43,8 @@ let stockDetail: StockDetail | null = null;
 let stockDetailFor = "";
 let loadingStockDetail = false;
 let stockDetailGen = 0;
+const stickyQuotes = new Map<string, Quote>();
+let quotesRefresh: Promise<void> | null = null;
 
 function showNewsPane(): void {
   mobilePane = "news";
@@ -79,24 +81,40 @@ function stockById(id: string): Stock | undefined {
   return watchlist.find((s) => s.id === id) ?? findStock(id);
 }
 
+function storeQuote(stock: Stock, q: Quote): void {
+  if (q.price <= 0) return;
+  const row: Quote = { ...q, symbol: stock.yahoo, name: q.name || stock.name };
+  quotes.set(stock.yahoo, row);
+  stickyQuotes.set(stock.yahoo, row);
+}
+
 function quoteFor(stock: Stock): Quote | undefined {
   const q = quotes.get(stock.yahoo)
     ?? quotes.get(stock.yahoo.toUpperCase())
     ?? quotes.get(stock.id)
     ?? quotes.get(`${stock.id}.KS`)
-    ?? quotes.get(`${stock.id}.KQ`);
+    ?? quotes.get(`${stock.id}.KQ`)
+    ?? stickyQuotes.get(stock.yahoo)
+    ?? stickyQuotes.get(stock.id);
   return q && q.price > 0 ? q : undefined;
 }
 
 function rememberQuotes(rows: Quote[]): void {
   for (const q of rows) {
-    if (q.price > 0) quotes.set(q.symbol, q);
+    if (q.price <= 0) continue;
+    quotes.set(q.symbol, q);
+    stickyQuotes.set(q.symbol, q);
+    const stock = watchlist.find((s) => s.yahoo === q.symbol || s.id === q.symbol);
+    if (stock && stock.yahoo !== q.symbol) {
+      quotes.set(stock.yahoo, { ...q, symbol: stock.yahoo });
+      stickyQuotes.set(stock.yahoo, { ...q, symbol: stock.yahoo });
+    }
   }
 }
 
 function seedQuote(stock: Stock, hit: SearchHit | Stock): void {
   if (!("price" in hit) || hit.price == null || !Number.isFinite(hit.price) || hit.price <= 0) return;
-  quotes.set(stock.yahoo, {
+  storeQuote(stock, {
     symbol: stock.yahoo,
     price: hit.price,
     changePct: hit.changePct ?? 0,
@@ -290,12 +308,20 @@ async function refreshMine(): Promise<void> {
 }
 
 async function refreshQuotes(): Promise<void> {
+  if (quotesRefresh) return quotesRefresh;
+  quotesRefresh = refreshQuotesInner().finally(() => {
+    quotesRefresh = null;
+  });
+  return quotesRefresh;
+}
+
+async function refreshQuotesInner(): Promise<void> {
   try {
-    const cached = await fetchQuotes(watchlist, [...quotes.values()], false);
-    rememberQuotes(cached);
+    const snap = () => [...quotes.values(), ...stickyQuotes.values()];
+    rememberQuotes(await fetchQuotes(watchlist, snap(), false));
     paint();
-    const live = await fetchQuotes(watchlist, [...quotes.values()], true);
-    rememberQuotes(live);
+    if (watchlist.every((s) => quoteFor(s))) return;
+    rememberQuotes(await fetchQuotes(watchlist, snap(), true));
     paint();
   } catch {
     /* quotes are optional */
@@ -343,8 +369,8 @@ async function refreshStockDetail(): Promise<void> {
   if (!seeded && !quoteFor(stock)) {
     void fetchQuoteQuick(stock).then((q) => {
       if (!q || gen !== stockDetailGen || filterId !== stock.id) return;
-      quotes.set(stock.yahoo, q);
-      if (q && q.price > 0 && (stockDetailFor !== stock.id || !stockDetail?.stats.length)) {
+      storeQuote(stock, q);
+      if (stockDetailFor !== stock.id || !stockDetail?.stats.length) {
         stockDetail = detailFromQuote(stock, q);
         stockDetailFor = stock.id;
         paint();
@@ -357,7 +383,7 @@ async function refreshStockDetail(): Promise<void> {
     if (detail && detail.price > 0) {
       stockDetail = detail;
       stockDetailFor = stock.id;
-      quotes.set(stock.yahoo, {
+      storeQuote(stock, {
         symbol: stock.yahoo,
         price: detail.price,
         changePct: detail.changePct,
