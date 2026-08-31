@@ -1,5 +1,6 @@
 import { classifyTone } from "./impact";
 import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStockDetail, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuotes, fetchReview, fetchStockDetail, fetchStockNews, lastPulls, searchRemote } from "./api";
+import { INDEX_REFRESH_MS } from "./feeds";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
 import { sparkPath } from "./indices";
@@ -291,6 +292,10 @@ async function refreshQuotes(): Promise<void> {
   } catch {
     /* quotes are optional */
   }
+}
+
+function shouldPollIndices(): boolean {
+  return tab === "market" && document.visibilityState === "visible";
 }
 
 async function refreshIndices(): Promise<void> {
@@ -677,7 +682,10 @@ function bind(): void {
     const tabBtn = t.closest<HTMLElement>("[data-tab]");
     if (tabBtn?.dataset.tab === "market" || tabBtn?.dataset.tab === "mine" || tabBtn?.dataset.tab === "review") {
       tab = tabBtn.dataset.tab;
-      if (tab === "market") clearStockFilter();
+      if (tab === "market") {
+        clearStockFilter();
+        void refreshIndices();
+      }
       showNewsPane();
       paint();
       return;
@@ -755,8 +763,11 @@ export function render(): void {
     void refreshAll();
   }, 180_000);
   window.setInterval(() => {
-    void refreshIndices();
-  }, 90_000);
+    if (shouldPollIndices()) void refreshIndices();
+  }, INDEX_REFRESH_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (shouldPollIndices()) void refreshIndices();
+  });
   window.setInterval(() => paint(), 30_000);
 
   window.addEventListener("keydown", (event) => {

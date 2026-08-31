@@ -12,6 +12,8 @@ const UA =
 
 const cache = new Map<string, { at: number; data: unknown }>();
 const CACHE_MS = 90_000;
+export const INDEX_REFRESH_MS = 15_000;
+const INDEX_CACHE_MS = 12_000;
 
 function cached<T>(key: string, ttl: number, load: () => Promise<T>): Promise<T> {
   const hit = cache.get(key);
@@ -755,7 +757,7 @@ async function fetchQuote(symbol: string): Promise<Quote | null> {
 
 async function fetchIndex(spec: IndexSpec): Promise<IndexQuote | null> {
   const hit = cache.get(`index:${spec.symbol}`);
-  if (hit && Date.now() - hit.at < 60_000) return (hit.data as IndexQuote | null) ?? null;
+  if (hit && Date.now() - hit.at < INDEX_CACHE_MS) return (hit.data as IndexQuote | null) ?? null;
   let row: IndexQuote | null = null;
   if (spec.naver) {
     try {
