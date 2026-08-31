@@ -381,7 +381,8 @@ async function refreshIndices(): Promise<void> {
     /* indices are optional */
   } finally {
     loadingIndices = false;
-    paint();
+    if (hasShell()) updateIndexBoard();
+    else paint();
   }
 }
 
@@ -654,6 +655,49 @@ function indexBoard(): string {
   return `<div class="board-wrap"><div class="board-head"><h2 class="board-label">주요 지수</h2><span class="board-hint">${esc(indexBoardHint())}</span></div><section class="board">${indices.map(indexCard).join("")}</section></div>`;
 }
 
+function hasShell(): boolean {
+  return Boolean(app.querySelector(".shell"));
+}
+
+function restoreScroll(mainTop: number, sideTop: number): void {
+  const apply = (): void => {
+    const nextMain = app.querySelector<HTMLElement>(".main");
+    const nextSide = app.querySelector<HTMLElement>(".side");
+    if (nextMain) nextMain.scrollTop = mainTop;
+    if (nextSide) nextSide.scrollTop = sideTop;
+  };
+  apply();
+  requestAnimationFrame(() => {
+    apply();
+    requestAnimationFrame(apply);
+  });
+}
+
+function updateStatusPills(): void {
+  const st = marketStatus();
+  const pills = app.querySelectorAll<HTMLElement>(".status-row .pill");
+  if (pills[0]) pills[0].textContent = st.kr;
+  if (pills[1]) pills[1].textContent = st.us;
+}
+
+function updateIndexBoard(): void {
+  if (tab !== "market" && tab !== "mine") return;
+  const html = indexBoard();
+  const existing = app.querySelector(".board-wrap");
+  if (!html) {
+    existing?.remove();
+    return;
+  }
+  if (!existing) {
+    paint();
+    return;
+  }
+  const temp = document.createElement("div");
+  temp.innerHTML = html;
+  const next = temp.firstElementChild;
+  if (next) existing.replaceWith(next);
+}
+
 function indexBoardHint(): string {
   const st = marketStatus();
   if (st.kr === "한국 개장" || st.us === "미국 개장") return "당일 장중 · 5분봉";
@@ -767,14 +811,11 @@ function paint(): void {
 
   if (keepSearch) {
     const input = app.querySelector<HTMLInputElement>("#q");
-    input?.focus();
+    input?.focus({ preventScroll: true });
     if (input && selStart != null && selEnd != null) input.setSelectionRange(selStart, selEnd);
   }
 
-  const nextMain = app.querySelector<HTMLElement>(".main");
-  const nextSide = app.querySelector<HTMLElement>(".side");
-  if (nextMain) nextMain.scrollTop = mainScrollTop;
-  if (nextSide) nextSide.scrollTop = sideScrollTop;
+  restoreScroll(mainScrollTop, sideScrollTop);
 }
 
 function skeleton(): string {
@@ -917,13 +958,13 @@ export function render(): void {
   document.addEventListener("visibilitychange", () => {
     if (shouldPollIndices()) void refreshIndices();
   });
-  window.setInterval(() => paint(), 30_000);
+  window.setInterval(updateStatusPills, 30_000);
 
   window.addEventListener("keydown", (event) => {
     if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
     const el = event.target as HTMLElement;
     if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return;
     event.preventDefault();
-    app.querySelector<HTMLInputElement>("#q")?.focus();
+    app.querySelector<HTMLInputElement>("#q")?.focus({ preventScroll: true });
   });
 }
