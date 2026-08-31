@@ -75,8 +75,12 @@ export function mergeNews(previous: NewsItem[], incoming: NewsItem[], now = Date
 
 export function mergeQuotes(previous: Quote[], incoming: Quote[]): Quote[] {
   const map = new Map<string, Quote>();
-  for (const q of previous) map.set(q.symbol, q);
-  for (const q of incoming) map.set(q.symbol, q);
+  for (const q of previous) {
+    if (q.price > 0) map.set(q.symbol, q);
+  }
+  for (const q of incoming) {
+    if (q.price > 0) map.set(q.symbol, q);
+  }
   return [...map.values()];
 }
 

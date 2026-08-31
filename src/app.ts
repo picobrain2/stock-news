@@ -15,7 +15,11 @@ const boot = loadArchive();
 
 let tab: Tab = "market";
 let watchlist = loadWatchlist();
-let quotes = new Map((boot.quotes.length ? boot.quotes : bundledQuotes()).map((q) => [q.symbol, q]));
+let quotes = new Map(
+  (boot.quotes.length ? boot.quotes : bundledQuotes())
+    .filter((q) => q.price > 0)
+    .map((q) => [q.symbol, q]),
+);
 let marketNews: NewsItem[] = boot.market.length ? boot.market : bundledMarket();
 let stockNews: NewsItem[] = boot.stocks.length ? boot.stocks : bundledStocks();
 let filterId = "all";
@@ -85,7 +89,9 @@ function quoteFor(stock: Stock): Quote | undefined {
 }
 
 function rememberQuotes(rows: Quote[]): void {
-  quotes = new Map(rows.filter((q) => q.price > 0).map((q) => [q.symbol, q]));
+  for (const q of rows) {
+    if (q.price > 0) quotes.set(q.symbol, q);
+  }
 }
 
 function seedQuote(stock: Stock, hit: SearchHit | Stock): void {
@@ -288,7 +294,7 @@ async function refreshQuotes(): Promise<void> {
     const cached = await fetchQuotes(watchlist, [...quotes.values()], false);
     rememberQuotes(cached);
     paint();
-    const live = await fetchQuotes(watchlist, cached, true);
+    const live = await fetchQuotes(watchlist, [...quotes.values()], true);
     rememberQuotes(live);
     paint();
   } catch {
