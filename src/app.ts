@@ -1,5 +1,5 @@
 import { classifyTone } from "./impact";
-import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStockDetail, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuoteQuick, fetchQuotes, fetchReview, fetchStockDetail, fetchStockNews, lastPulls, searchRemote } from "./api";
+import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStockDetail, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuoteQuick, fetchQuotes, fetchReview, fetchStockDetail, fetchStockNews, lastPulls, loadDetailCache, searchRemote } from "./api";
 import { detailFromQuote, mergeStockDetail } from "./naverStock";
 import { INDEX_REFRESH_MS } from "./feeds";
 import { loadArchive, saveArchive } from "./archive";
@@ -44,7 +44,19 @@ let stockDetailFor = "";
 let loadingStockDetail = false;
 let stockDetailGen = 0;
 const stickyQuotes = new Map<string, Quote>();
+const stickyDetails = new Map<string, StockDetail>();
 let quotesRefresh: Promise<void> | null = null;
+
+function rememberStockDetail(stock: Stock, incoming: StockDetail): StockDetail {
+  const prev = stickyDetails.get(stock.id);
+  const row = prev ? mergeStockDetail(prev, incoming) : incoming;
+  stickyDetails.set(stock.id, row);
+  return row;
+}
+
+function detailFor(stock: Stock): StockDetail | undefined {
+  return stickyDetails.get(stock.id);
+}
 
 function showNewsPane(): void {
   mobilePane = "news";
@@ -361,8 +373,15 @@ async function refreshStockDetail(): Promise<void> {
   const gen = ++stockDetailGen;
   const seeded = bundledStockDetail(stock.id);
   if (seeded) {
-    stockDetail = seeded;
+    stockDetail = rememberStockDetail(stock, seeded);
     stockDetailFor = stock.id;
+  } else {
+    void loadDetailCache(stock.id).then((fileSeed) => {
+      if (!fileSeed || gen !== stockDetailGen || filterId !== stock.id) return;
+      stockDetail = rememberStockDetail(stock, fileSeed);
+      stockDetailFor = stock.id;
+      paint();
+    });
   }
   loadingStockDetail = true;
   paint();
@@ -372,9 +391,7 @@ async function refreshStockDetail(): Promise<void> {
       storeQuote(stock, q);
       if (stockDetailFor !== stock.id || !stockDetail?.stats.length) {
         const next = detailFromQuote(stock, q);
-        stockDetail = stockDetail && stockDetailFor === stock.id
-          ? mergeStockDetail(stockDetail, next)
-          : next;
+        stockDetail = rememberStockDetail(stock, next);
         stockDetailFor = stock.id;
         paint();
       }
@@ -384,9 +401,7 @@ async function refreshStockDetail(): Promise<void> {
     const detail = await fetchStockDetail(stock);
     if (gen !== stockDetailGen || filterId !== stock.id) return;
     if (detail && detail.price > 0) {
-      stockDetail = stockDetail && stockDetailFor === stock.id
-        ? mergeStockDetail(stockDetail, detail)
-        : detail;
+      stockDetail = rememberStockDetail(stock, detail);
       stockDetailFor = stock.id;
       storeQuote(stock, {
         symbol: stock.yahoo,
@@ -501,10 +516,15 @@ function stockDetailPanel(): string {
   const stock = stockById(filterId);
   if (!stock) return "";
   const matched = stockDetailFor === filterId ? stockDetail : null;
-  const q: StockDetail | null = matched ?? (() => {
-    const hit = quoteFor(stock);
-    if (!hit) return null;
-    return detailFromQuote(stock, hit);
+  const sticky = detailFor(stock);
+  const q: StockDetail | null = (() => {
+    const base = matched ?? (() => {
+      const hit = quoteFor(stock);
+      if (!hit) return null;
+      return detailFromQuote(stock, hit);
+    })();
+    if (!base) return sticky ?? null;
+    return sticky ? mergeStockDetail(sticky, base) : base;
   })();
   if (!q || q.price <= 0) {
     if (loadingStockDetail) {

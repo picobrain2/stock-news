@@ -1,6 +1,6 @@
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "./archive";
 import { fetchText, getIndexBoard, getQuotes, searchSymbols } from "./feeds";
-import { applyQuoteToDetail, detailFromQuote, getStockDetail } from "./naverStock";
+import { applyQuoteToDetail, detailFromQuote, getStockDetail, mergeStockDetail } from "./naverStock";
 import { mergeIndices } from "./indices";
 import rawReview from "./review.json";
 import rawSnapshot from "./snapshot.json";
@@ -172,6 +172,21 @@ export function bundledStockDetail(id: string): StockDetail | undefined {
   return snapshot.stockDetails?.[id];
 }
 
+export async function loadDetailCache(id: string): Promise<StockDetail | undefined> {
+  const bundled = bundledStockDetail(id);
+  if (bundled) return bundled;
+  try {
+    const data = await getJson<{ details?: Record<string, StockDetail> }>(dataUrl("details.json"));
+    return data.details?.[id];
+  } catch {
+    return undefined;
+  }
+}
+
+function withDetailCache(cached: StockDetail | undefined, row: StockDetail): StockDetail {
+  return cached ? mergeStockDetail(cached, row) : row;
+}
+
 export async function fetchQuoteQuick(stock: Stock): Promise<Quote | null> {
   try {
     const rows = await getQuotes([stock.yahoo]);
@@ -193,25 +208,25 @@ export async function fetchStockDetail(stock: Stock): Promise<StockDetail | null
     const data = await getJson<{ detail: StockDetail | null }>(`/api/stock-detail?${q}`);
     return data.detail ?? null;
   }
-  const cached = bundledStockDetail(stock.id);
   if (stock.market === "us") {
-    const [live, yahooQ] = await Promise.all([
+    const [cached, live, yahooQ] = await Promise.all([
+      loadDetailCache(stock.id),
       getStockDetail(stock, fetchText).catch(() => null),
       fetchQuoteQuick(stock),
     ]);
-    if (live) return yahooQ ? applyQuoteToDetail(live, yahooQ) : live;
-    if (yahooQ) return detailFromQuote(stock, yahooQ);
-  } else {
-    const live = await getStockDetail(stock, fetchText).catch(() => null);
-    if (live) return live;
+    if (live) {
+      const row = yahooQ ? applyQuoteToDetail(live, yahooQ) : live;
+      return withDetailCache(cached, row);
+    }
+    if (yahooQ) return withDetailCache(cached, detailFromQuote(stock, yahooQ));
+    return cached ?? null;
   }
-  if (cached) return cached;
-  try {
-    const data = await getJson<{ details?: Record<string, StockDetail> }>(dataUrl("details.json"));
-    return data.details?.[stock.id] ?? null;
-  } catch {
-    return null;
-  }
+  const [cached, live] = await Promise.all([
+    loadDetailCache(stock.id),
+    getStockDetail(stock, fetchText).catch(() => null),
+  ]);
+  if (live) return withDetailCache(cached, live);
+  return cached ?? null;
 }
 
 export async function searchRemote(query: string): Promise<SearchHit[]> {
