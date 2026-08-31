@@ -36,18 +36,60 @@ export function downsample(values: number[], max = 56): number[] {
 }
 
 export function sparkPath(values: number[], width = 140, height = 36): string {
-  const nums = downsample(values, 56);
-  if (nums.length < 2) return "";
+  const chart = buildSparkChart(values, width, height);
+  return chart?.line ?? "";
+}
+
+function formatSparkDate(date: Date): string {
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+export function sparkTimeLabels(pointCount: number, now = Date.now()): { start: string; end: string } {
+  if (pointCount < 2) return { start: "", end: "" };
+  const end = new Date(now);
+  const cursor = new Date(now);
+  let trading = 0;
+  while (trading < pointCount - 1) {
+    cursor.setDate(cursor.getDate() - 1);
+    const dow = cursor.getDay();
+    if (dow !== 0 && dow !== 6) trading += 1;
+  }
+  return { start: formatSparkDate(cursor), end: formatSparkDate(end) };
+}
+
+export interface SparkChart {
+  line: string;
+  area: string;
+  width: number;
+  height: number;
+  labels: { start: string; end: string };
+  min: number;
+  max: number;
+}
+
+export function buildSparkChart(values: number[], width = 168, height = 46): SparkChart | null {
+  const nums = downsample(values, 40);
+  if (nums.length < 2) return null;
   const min = Math.min(...nums);
   const max = Math.max(...nums);
   const span = max - min || 1;
-  return nums
-    .map((v, i) => {
-      const x = (i / (nums.length - 1)) * width;
-      const y = height - ((v - min) / span) * (height - 6) - 3;
-      return `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
+  const padY = 4;
+  const innerH = height - padY * 2;
+  const points = nums.map((v, i) => ({
+    x: (i / (nums.length - 1)) * width,
+    y: padY + innerH - ((v - min) / span) * innerH,
+  }));
+  const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+  const area = `${line} L${width.toFixed(1)} ${height} L0 ${height} Z`;
+  return {
+    line,
+    area,
+    width,
+    height,
+    labels: sparkTimeLabels(nums.length),
+    min,
+    max,
+  };
 }
 
 export function mergeIndices(previous: IndexQuote[], incoming: IndexQuote[]): IndexQuote[] {

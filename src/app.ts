@@ -4,7 +4,7 @@ import { detailFromQuote } from "./naverStock";
 import { INDEX_REFRESH_MS } from "./feeds";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
-import { sparkPath } from "./indices";
+import { buildSparkChart } from "./indices";
 import { formatDay, formatIndexPrice, formatPct, formatPrice, formatRange, fromNow, isFresh, marketStatus } from "./time";
 import { cleanSnippet } from "./text";
 import type { IndexQuote, NewsItem, Quote, ReviewBundle, ReviewRange, SearchHit, Stock, StockDetail, Tab } from "./types";
@@ -542,13 +542,37 @@ function stockDetailPanel(): string {
 function indexCard(row: IndexQuote): string {
   const tone = row.changePct > 0 ? "up" : row.changePct < 0 ? "down" : "flat";
   const color = tone === "up" ? "var(--up)" : tone === "down" ? "var(--down)" : "var(--muted)";
-  const d = sparkPath(row.spark);
+  const chart = buildSparkChart(row.spark);
+  const gradId = `spark-${row.id}`;
+  const chartBlock = chart ? `
+    <div class="index-chart">
+      <svg class="spark" viewBox="0 0 ${chart.width} ${chart.height}" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${color}" stop-opacity="0.32"></stop>
+            <stop offset="100%" stop-color="${color}" stop-opacity="0"></stop>
+          </linearGradient>
+        </defs>
+        <line class="spark-grid" x1="0" y1="${(chart.height * 0.33).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.33).toFixed(1)}"></line>
+        <line class="spark-grid" x1="0" y1="${(chart.height * 0.66).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.66).toFixed(1)}"></line>
+        <path class="spark-area" d="${chart.area}" fill="url(#${gradId})"></path>
+        <path class="spark-line" d="${chart.line}" fill="none" stroke="${color}" stroke-width="1.8" vector-effect="non-scaling-stroke"></path>
+      </svg>
+      <div class="spark-axis">
+        <span>${esc(chart.labels.start)}</span>
+        <span class="spark-range">${esc(formatIndexPrice(chart.min))} – ${esc(formatIndexPrice(chart.max))}</span>
+        <span>${esc(chart.labels.end)}</span>
+      </div>
+    </div>
+  ` : `<div class="spark-gap"><span class="muted">차트 없음</span></div>`;
   return `
-    <article class="index">
-      <div class="index-name">${esc(row.name)}</div>
+    <article class="index tone-${tone}">
+      <div class="index-top">
+        <div class="index-name">${esc(row.name)}</div>
+        <div class="index-chg ${tone === "flat" ? "muted" : tone}">${esc(formatPct(row.changePct))}</div>
+      </div>
       <div class="index-px">${esc(formatIndexPrice(row.price))}</div>
-      <div class="${tone === "flat" ? "muted" : tone}">${esc(formatPct(row.changePct))}</div>
-      ${d ? `<svg class="spark" viewBox="0 0 140 36" preserveAspectRatio="none" aria-hidden="true"><path d="${d}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>` : `<div class="spark-gap"></div>`}
+      ${chartBlock}
     </article>
   `;
 }
