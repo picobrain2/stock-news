@@ -1,4 +1,5 @@
 import { parseNewsDate } from "./time";
+import { isGoogleNewsBoilerplate } from "./googleNews";
 
 export function decodeEntities(raw: string): string {
   return raw
@@ -32,6 +33,7 @@ const JUNK = /cookie|subscribe subscribe|all rights reserved|copyright|구독하
 export function cleanSnippet(snippet: string, title = ""): string {
   let s = stripHtml(snippet);
   if (!s) return "";
+  if (isGoogleNewsBoilerplate(s)) return "";
   if (/<\s*a\b/i.test(s) || /\bhref\s*=/i.test(s)) return "";
   if (/^https?:\/\//i.test(s) && !s.includes(" ")) return "";
   if (JUNK.test(s) && s.length < 80) return "";

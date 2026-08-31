@@ -1,6 +1,7 @@
+import { isGoogleNewsBoilerplate, isGoogleNewsUrl, resolveGoogleNewsUrl } from "./googleNews";
 import { classifyTone, inferRegion, isMarketRelevant, isOffTopicNews, scoreImpact } from "./impact";
 import { downsample, INDEX_SPECS, type IndexSpec } from "./indices";
-import { extractArticleText, extractCanonicalUrl, extractPublishedAt, stripHtml, summarizeText } from "./text";
+import { extractArticleText, extractPublishedAt, stripHtml, summarizeText } from "./text";
 import { parseNewsDate, pickPublishedAt, rangeWindow } from "./time";
 import type { IndexQuote, NewsItem, Quote, SearchHit, SourcePull, ReviewRange } from "./types";
 
@@ -420,43 +421,66 @@ export async function getPeriodNews(range: ReviewRange): Promise<NewsItem[]> {
   });
 }
 
-async function articleSummary(url: string, title: string): Promise<{ snippet: string; publishedAt: number }> {
+async function articleSummary(url: string, title: string): Promise<{ snippet: string; publishedAt: number; url?: string }> {
   try {
-    let html = await fetchText(url, 5500);
-    if (/news\.google\.com/i.test(url)) {
-      const target = extractCanonicalUrl(html, url);
-      if (target !== url) html = await fetchText(target, 5500);
+    let target = url;
+    if (isGoogleNewsUrl(url)) {
+      const resolved = await resolveGoogleNewsUrl(url, fetchText);
+      if (!resolved) return { snippet: "", publishedAt: 0 };
+      target = resolved;
     }
+    const html = await fetchText(target, 5500);
+    if (/news\.google\.com/i.test(target)) return { snippet: "", publishedAt: 0 };
+    const snippet = summarizeText(extractArticleText(html), title, 420);
+    if (isGoogleNewsBoilerplate(snippet)) return { snippet: "", publishedAt: 0 };
     return {
-      snippet: summarizeText(extractArticleText(html), title, 420),
+      snippet,
       publishedAt: extractPublishedAt(html),
+      url: target !== url ? target : undefined,
     };
   } catch {
     return { snippet: "", publishedAt: 0 };
   }
 }
 
+function needsSnippetFetch(item: NewsItem): boolean {
+  const snippet = summarizeText(item.snippet, item.title);
+  if (item.publishedAt <= 0) return true;
+  if (snippet.length < 48) return true;
+  if (isGoogleNewsBoilerplate(snippet)) return true;
+  if (isGoogleNewsUrl(item.url)) return true;
+  return false;
+}
+
 export async function enrichSnippets(items: NewsItem[]): Promise<NewsItem[]> {
   if (isBrowser) {
-    return items.map((item) => ({ ...item, snippet: summarizeText(item.snippet, item.title) }));
+    return items.map((item) => ({
+      ...item,
+      snippet: isGoogleNewsBoilerplate(item.snippet) ? "" : summarizeText(item.snippet, item.title),
+    }));
   }
-  const need = items
-    .filter((item) => summarizeText(item.snippet, item.title).length < 48 || item.publishedAt <= 0)
-    .slice(0, 40);
+  const need = items.filter((item) => needsSnippetFetch(item)).slice(0, 48);
   const found = new Map<string, string>();
   const dates = new Map<string, number>();
-  await mapLimit(need, 5, async (item) => {
+  const urls = new Map<string, string>();
+  await mapLimit(need, 4, async (item) => {
     const meta = await articleSummary(item.url, item.title);
     if (meta.snippet.length >= 40) found.set(item.id, meta.snippet);
     if (meta.publishedAt > 0) dates.set(item.id, meta.publishedAt);
-    await sleep(50);
+    if (meta.url) urls.set(item.id, meta.url);
+    await sleep(40);
   });
   console.log(`snippets ${found.size}/${need.length}`);
-  return items.map((item) => ({
-    ...item,
-    snippet: found.get(item.id) || summarizeText(item.snippet, item.title),
-    publishedAt: pickPublishedAt(item.publishedAt, dates.get(item.id) ?? 0),
-  }));
+  return items.map((item) => {
+    const snippet = found.get(item.id)
+      ?? (isGoogleNewsBoilerplate(item.snippet) ? "" : summarizeText(item.snippet, item.title));
+    return {
+      ...item,
+      snippet,
+      url: urls.get(item.id) ?? item.url,
+      publishedAt: pickPublishedAt(item.publishedAt, dates.get(item.id) ?? 0),
+    };
+  });
 }
 
 export interface StockQuery {
