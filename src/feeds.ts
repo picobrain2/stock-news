@@ -1,8 +1,8 @@
 import { isGoogleNewsBoilerplate, isGoogleNewsUrl, resolveGoogleNewsUrl } from "./googleNews";
 import { classifyTone, inferRegion, isMarketRelevant, isOffTopicNews, scoreImpact } from "./impact";
-import { downsample, INDEX_SPECS, type IndexSpec } from "./indices";
+import { INDEX_SPECS, indexSession, SESSION_BOUNDS, type IndexSpec } from "./indices";
 import { extractArticleText, extractPublishedAt, stripHtml, summarizeText } from "./text";
-import { parseNewsDate, pickPublishedAt, rangeWindow } from "./time";
+import { dateKeyInTimeZone, isKrMarketOpen, isUsMarketOpen, minutesInTimeZone, parseNewsDate, pickPublishedAt, rangeWindow } from "./time";
 import type { IndexQuote, NewsItem, Quote, SearchHit, SourcePull, ReviewRange } from "./types";
 
 const isBrowser = typeof window !== "undefined";
@@ -663,10 +663,95 @@ type YahooChart = {
   chart?: {
     result?: {
       meta?: YahooMeta;
+      timestamp?: number[];
       indicators?: { quote?: { close?: (number | null)[] }[] };
     }[];
   };
 };
+
+interface IntradayPoint {
+  t: number;
+  v: number;
+}
+
+function yahooIntraday(raw: string): IntradayPoint[] {
+  const data = JSON.parse(raw) as YahooChart;
+  const result = data.chart?.result?.[0];
+  if (!result) return [];
+  const stamps = result.timestamp ?? [];
+  const closes = result.indicators?.quote?.[0]?.close ?? [];
+  const out: IntradayPoint[] = [];
+  for (let i = 0; i < stamps.length; i++) {
+    const t = stamps[i];
+    const v = closes[i];
+    if (t == null || v == null || !Number.isFinite(v)) continue;
+    out.push({ t: t * 1000, v });
+  }
+  return out;
+}
+
+function parseNaverWorldIntraday(raw: string): IntradayPoint[] {
+  const chart = JSON.parse(raw) as {
+    priceInfos?: { localDateTime?: string; currentPrice?: number }[];
+  };
+  const out: IntradayPoint[] = [];
+  for (const row of chart.priceInfos ?? []) {
+    const rawDt = row.localDateTime ?? "";
+    if (rawDt.length < 14) continue;
+    const v = num(row.currentPrice);
+    if (!Number.isFinite(v)) continue;
+    const iso = `${rawDt.slice(0, 4)}-${rawDt.slice(4, 6)}-${rawDt.slice(6, 8)}T${rawDt.slice(8, 10)}:${rawDt.slice(10, 12)}:${rawDt.slice(12, 14)}`;
+    const t = Date.parse(`${iso}-05:00`);
+    if (!Number.isFinite(t)) continue;
+    out.push({ t, v });
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+
+export function filterIntradaySession(points: IntradayPoint[], session: "kr" | "us", now = Date.now()): IntradayPoint[] {
+  if (!points.length) return [];
+  const { tz, open, close } = SESSION_BOUNDS[session];
+  const tradeDate = dateKeyInTimeZone(points[points.length - 1]!.t, tz);
+  let day = points.filter((p) => dateKeyInTimeZone(p.t, tz) === tradeDate);
+  day = day.filter((p) => {
+    const m = minutesInTimeZone(p.t, tz);
+    return m >= open && m <= close;
+  });
+  if (!day.length) return [];
+
+  const today = dateKeyInTimeZone(now, tz);
+  const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
+  if (openNow && tradeDate === today) {
+    day = day.filter((p) => p.t <= now);
+  }
+  return day.length >= 2 ? day : points.slice(-2);
+}
+
+function downsampleIntraday(points: IntradayPoint[], max = 56): IntradayPoint[] {
+  if (points.length <= max) return points;
+  const out: IntradayPoint[] = [];
+  for (let i = 0; i < max; i++) {
+    const idx = Math.round((i * (points.length - 1)) / (max - 1));
+    out.push(points[idx]!);
+  }
+  return out;
+}
+
+async function fetchIntradaySeries(spec: IndexSpec, alt?: IntradayPoint[]): Promise<IntradayPoint[]> {
+  const session = indexSession(spec.id);
+  try {
+    const raw = await fetchText(yahooChartUrl(spec.symbol, "5m", "1d"), 8000);
+    const filtered = filterIntradaySession(yahooIntraday(raw), session);
+    if (filtered.length >= 2) return downsampleIntraday(filtered, 56);
+  } catch {
+    /* fall through */
+  }
+  if (alt && alt.length >= 2) {
+    const filtered = filterIntradaySession(alt, session);
+    if (filtered.length >= 2) return downsampleIntraday(filtered, 56);
+  }
+  return [];
+}
 
 function yahooCloses(raw: string): { meta: YahooMeta; closes: number[] } | null {
   const data = JSON.parse(raw) as YahooChart;
@@ -802,15 +887,21 @@ function num(raw: unknown): number {
   return Number.isFinite(n) ? n : NaN;
 }
 
-function sparkFrom(price: number, changePct: number, closes: number[]): number[] {
-  const series = closes.filter((n) => Number.isFinite(n));
-  if (series.length >= 2) return downsample(series, 56);
+function sparkFallback(price: number, changePct: number): { spark: number[] } {
   const prev = changePct !== 0 ? price / (1 + changePct / 100) : price;
-  return downsample([prev, price], 8);
+  return { spark: [prev, price] };
 }
 
-function packIndex(spec: IndexSpec, price: number, changePct: number, currency: string, closes: number[]): IndexQuote | null {
+function packIndex(spec: IndexSpec, price: number, changePct: number, currency: string, series: IntradayPoint[]): IndexQuote | null {
   if (!Number.isFinite(price)) return null;
+  const session = indexSession(spec.id);
+  const sparkPack = series.length >= 2
+    ? {
+        spark: series.map((p) => p.v),
+        sparkAt: series.map((p) => p.t),
+        sparkTz: SESSION_BOUNDS[session].tz,
+      }
+    : sparkFallback(price, changePct);
   return {
     id: spec.id,
     name: spec.name,
@@ -818,7 +909,7 @@ function packIndex(spec: IndexSpec, price: number, changePct: number, currency: 
     price,
     changePct: Number.isFinite(changePct) ? changePct : 0,
     currency,
-    spark: sparkFrom(price, changePct, closes),
+    ...sparkPack,
   };
 }
 
@@ -826,31 +917,35 @@ async function fetchNaverIndex(spec: IndexSpec): Promise<IndexQuote | null> {
   const src = spec.naver;
   if (!src) return null;
   if (src.kind === "kr") {
-    const [basicRaw, histRaw] = await Promise.all([
-      fetchText(`https://m.stock.naver.com/api/index/${src.code}/basic`, 4000),
-      fetchText(`https://m.stock.naver.com/api/index/${src.code}/price?pageSize=40&timeFrame=day`, 4000).catch(() => "[]"),
-    ]);
+    const basicRaw = await fetchText(`https://m.stock.naver.com/api/index/${src.code}/basic`, 4000);
     const basic = JSON.parse(basicRaw) as { closePrice?: string; fluctuationsRatio?: string };
-    const hist = JSON.parse(histRaw) as { closePrice?: string }[];
-    const closes = [...hist].reverse().map((row) => num(row.closePrice)).filter((n) => Number.isFinite(n));
-    return packIndex(spec, num(basic.closePrice), num(basic.fluctuationsRatio), "KRW", closes);
+    const series = await fetchIntradaySeries(spec);
+    return packIndex(spec, num(basic.closePrice), num(basic.fluctuationsRatio), "KRW", series);
   }
   if (src.kind === "world") {
     const [basicRaw, chartRaw] = await Promise.all([
       fetchText(`https://api.stock.naver.com/index/${src.code}/basic`, 4000),
-      fetchText(`https://api.stock.naver.com/chart/foreign/index/${src.code}?periodType=day&count=5`, 5000).catch(() => "{}"),
+      fetchText(`https://api.stock.naver.com/chart/foreign/index/${src.code}?periodType=day&count=1`, 5000).catch(() => "{}"),
     ]);
     const basic = JSON.parse(basicRaw) as { closePrice?: string; fluctuationsRatio?: string };
-    const chart = JSON.parse(chartRaw) as { lastClosePrice?: number; priceInfos?: { currentPrice?: number }[] };
-    const closes = (chart.priceInfos ?? []).map((row) => num(row.currentPrice)).filter((n) => Number.isFinite(n));
-    return packIndex(spec, num(basic.closePrice) || num(chart.lastClosePrice), num(basic.fluctuationsRatio), "USD", closes);
+    const chart = JSON.parse(chartRaw) as { lastClosePrice?: number };
+    const naverSeries = parseNaverWorldIntraday(chartRaw);
+    const series = await fetchIntradaySeries(spec, naverSeries);
+    return packIndex(
+      spec,
+      num(basic.closePrice) || num(chart.lastClosePrice),
+      num(basic.fluctuationsRatio),
+      "USD",
+      series,
+    );
   }
   if (src.kind === "fx") {
     const data = JSON.parse(await fetchText(`https://api.stock.naver.com/marketindex/exchange/${src.code}`, 4000)) as {
       exchangeInfo?: { closePrice?: string; fluctuationsRatio?: string };
     };
     const info = data.exchangeInfo ?? {};
-    return packIndex(spec, num(info.closePrice), num(info.fluctuationsRatio), "KRW", []);
+    const series = await fetchIntradaySeries(spec);
+    return packIndex(spec, num(info.closePrice), num(info.fluctuationsRatio), "KRW", series);
   }
   if (src.kind === "oil") {
     const html = await fetchText(
@@ -860,7 +955,8 @@ async function fetchNaverIndex(spec: IndexSpec): Promise<IndexQuote | null> {
     const price = parseNaverOilPrice(html);
     const changePct = parseNaverOilChangePct(html);
     if (price == null) return null;
-    return packIndex(spec, price, changePct ?? 0, "USD", []);
+    const series = await fetchIntradaySeries(spec);
+    return packIndex(spec, price, changePct ?? 0, "USD", series);
   }
   return null;
 }
@@ -895,21 +991,19 @@ function parseNaverDigits(html: string): number | null {
 
 async function fetchYahooIndex(spec: IndexSpec): Promise<IndexQuote | null> {
   let parsed: ReturnType<typeof yahooCloses> = null;
-  for (const [interval, range] of [["15m", "5d"], ["1d", "1mo"]] as const) {
-    try {
-      parsed = yahooCloses(await fetchText(yahooChartUrl(spec.symbol, interval, range), 8000));
-      if (parsed && (parsed.closes.length >= 2 || parsed.meta.regularMarketPrice != null)) break;
-    } catch {
-      parsed = null;
-    }
+  try {
+    parsed = yahooCloses(await fetchText(yahooChartUrl(spec.symbol, "5m", "1d"), 8000));
+  } catch {
+    parsed = null;
   }
   if (!parsed) return null;
-  const { meta, closes } = parsed;
-  const price = meta.regularMarketPrice ?? closes.at(-1);
+  const { meta } = parsed;
+  const price = meta.regularMarketPrice ?? parsed.closes.at(-1);
   if (price == null) return null;
-  const prev = meta.previousClose ?? meta.chartPreviousClose ?? closes[0];
+  const prev = meta.previousClose ?? meta.chartPreviousClose ?? parsed.closes[0];
   const changePct = meta.regularMarketChangePercent ?? (prev ? ((price - prev) / prev) * 100 : 0);
-  return packIndex(spec, price, changePct, meta.currency ?? "", closes);
+  const series = await fetchIntradaySeries(spec);
+  return packIndex(spec, price, changePct, meta.currency ?? "", series);
 }
 
 export async function searchSymbols(query: string): Promise<SearchHit[]> {

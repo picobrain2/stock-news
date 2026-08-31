@@ -4,7 +4,7 @@ import { detailFromQuote } from "./naverStock";
 import { INDEX_REFRESH_MS } from "./feeds";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
-import { buildSparkChart } from "./indices";
+import { buildSparkChart, indexSession } from "./indices";
 import { formatDay, formatIndexPrice, formatPct, formatPrice, formatRange, fromNow, isFresh, marketStatus } from "./time";
 import { cleanSnippet } from "./text";
 import type { IndexQuote, NewsItem, Quote, ReviewBundle, ReviewRange, SearchHit, Stock, StockDetail, Tab } from "./types";
@@ -542,7 +542,14 @@ function stockDetailPanel(): string {
 function indexCard(row: IndexQuote): string {
   const tone = row.changePct > 0 ? "up" : row.changePct < 0 ? "down" : "flat";
   const color = tone === "up" ? "var(--up)" : tone === "down" ? "var(--down)" : "var(--muted)";
-  const chart = buildSparkChart(row.spark);
+  const chart = buildSparkChart(
+    row.spark,
+    180,
+    58,
+    row.sparkAt,
+    row.sparkTz ?? "Asia/Seoul",
+    indexSession(row.id),
+  );
   const gradId = `spark-${row.id}`;
   const chartBlock = chart ? `
     <div class="index-chart">
@@ -584,7 +591,13 @@ function indexBoard(): string {
     return `<div class="board-wrap"><div class="board-head"><h2 class="board-label">주요 지수</h2><span class="board-hint">불러오는 중</span></div><section class="board">${Array.from({ length: 8 }, () => `<article class="index sk"><div class="sk-line w40"></div><div class="sk-line"></div><div class="sk-line w70"></div></article>`).join("")}</section></div>`;
   }
   if (!indices.length) return "";
-  return `<div class="board-wrap"><div class="board-head"><h2 class="board-label">주요 지수</h2><span class="board-hint">최근 1개월 · 일봉</span></div><section class="board">${indices.map(indexCard).join("")}</section></div>`;
+  return `<div class="board-wrap"><div class="board-head"><h2 class="board-label">주요 지수</h2><span class="board-hint">${esc(indexBoardHint())}</span></div><section class="board">${indices.map(indexCard).join("")}</section></div>`;
+}
+
+function indexBoardHint(): string {
+  const st = marketStatus();
+  if (st.kr === "한국 개장" || st.us === "미국 개장") return "당일 장중 · 5분봉";
+  return "금일 장 마감 · 5분봉";
 }
 
 function paint(): void {

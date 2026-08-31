@@ -52,6 +52,8 @@ export interface IndexQuote {
   changePct: number;
   currency: string;
   spark: number[];
+  sparkAt?: number[];
+  sparkTz?: string;
 }
 
 export interface SearchHit {

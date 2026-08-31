@@ -106,6 +106,44 @@ export function formatPct(pct: number): string {
   return `${sign}${pct.toFixed(2)}%`;
 }
 
+export function isKrMarketOpen(now = new Date()): boolean {
+  return marketStatus(now).kr === "한국 개장";
+}
+
+export function isUsMarketOpen(now = new Date()): boolean {
+  return marketStatus(now).us === "미국 개장";
+}
+
+export function minutesInTimeZone(ts: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  }).formatToParts(new Date(ts));
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
+  return hour * 60 + minute;
+}
+
+export function dateKeyInTimeZone(ts: number, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(ts));
+}
+
+export function formatSparkTime(ts: number, timeZone: string): string {
+  return new Date(ts).toLocaleTimeString("ko-KR", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 export function marketStatus(now = new Date()): { kr: string; us: string } {
   const krOpen = isOpen(now, 9, 0, 15, 30, 9);
   const usNow = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));

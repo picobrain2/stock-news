@@ -1,4 +1,5 @@
 import type { IndexQuote } from "./types";
+import { formatSparkTime } from "./time";
 
 export type NaverIndex =
   | { kind: "kr"; code: string }
@@ -24,6 +25,16 @@ export const INDEX_SPECS: IndexSpec[] = [
   { id: "usdkrw", name: "원/달러", symbol: "KRW=X", naver: { kind: "fx", code: "FX_USDKRW" } },
 ];
 
+export function indexSession(id: string): "kr" | "us" {
+  if (id === "kospi" || id === "kosdaq" || id === "usdkrw") return "kr";
+  return "us";
+}
+
+export const SESSION_BOUNDS = {
+  kr: { tz: "Asia/Seoul", open: 9 * 60, close: 15 * 60 + 30 },
+  us: { tz: "America/New_York", open: 9 * 60 + 30, close: 16 * 60 },
+} as const;
+
 export function downsample(values: number[], max = 56): number[] {
   const nums = values.filter((n) => Number.isFinite(n));
   if (nums.length <= max) return nums;
@@ -40,8 +51,23 @@ export function sparkPath(values: number[], width = 140, height = 36): string {
   return chart?.line ?? "";
 }
 
-function formatSparkDate(date: Date): string {
-  return `${date.getMonth() + 1}/${date.getDate()}`;
+function downsampleSeries(values: number[], times: number[] | undefined, max = 40): { values: number[]; times?: number[] } {
+  if (values.length <= max) return { values, times };
+  const outV: number[] = [];
+  const outT: number[] = [];
+  for (let i = 0; i < max; i++) {
+    const idx = Math.round((i * (values.length - 1)) / (max - 1));
+    outV.push(values[idx]!);
+    if (times?.length) outT.push(times[idx]!);
+  }
+  return { values: outV, times: outT.length ? outT : undefined };
+}
+
+function sessionOpenLabel(session: "kr" | "us"): string {
+  const { open } = SESSION_BOUNDS[session];
+  const h = Math.floor(open / 60);
+  const m = open % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 export interface SparkChart {
@@ -56,8 +82,16 @@ export interface SparkChart {
   lastY: number;
 }
 
-export function buildSparkChart(values: number[], width = 180, height = 58): SparkChart | null {
-  const nums = downsample(values, 40);
+export function buildSparkChart(
+  values: number[],
+  width = 180,
+  height = 58,
+  times?: number[],
+  tz = "Asia/Seoul",
+  session: "kr" | "us" = "kr",
+): SparkChart | null {
+  const sampled = downsampleSeries(values, times, 40);
+  const nums = sampled.values;
   if (nums.length < 2) return null;
   const min = Math.min(...nums);
   const max = Math.max(...nums);
@@ -71,23 +105,19 @@ export function buildSparkChart(values: number[], width = 180, height = 58): Spa
   const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
   const area = `${line} L${width.toFixed(1)} ${height} L0 ${height} Z`;
   const last = points[points.length - 1]!;
-  const end = new Date();
-  const start = new Date();
-  let trading = 0;
-  while (trading < nums.length - 1) {
-    start.setDate(start.getDate() - 1);
-    if (start.getDay() !== 0 && start.getDay() !== 6) trading += 1;
-  }
-  const sameDay = end.toDateString() === new Date().toDateString();
+  const stampTimes = sampled.times;
+  const startLabel = stampTimes?.length
+    ? formatSparkTime(stampTimes[0]!, tz)
+    : sessionOpenLabel(session);
+  const endLabel = stampTimes?.length
+    ? formatSparkTime(stampTimes[stampTimes.length - 1]!, tz)
+    : "현재";
   return {
     line,
     area,
     width,
     height,
-    labels: {
-      start: formatSparkDate(start),
-      end: sameDay ? "오늘" : formatSparkDate(end),
-    },
+    labels: { start: startLabel, end: endLabel },
     min,
     max,
     lastX: last.x,
