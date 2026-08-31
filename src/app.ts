@@ -36,12 +36,19 @@ let mobilePane: MobilePane = "news";
 let stockDetail: StockDetail | null = null;
 let stockDetailFor = "";
 let loadingStockDetail = false;
+let stockDetailGen = 0;
 
 function showNewsPane(): void {
   mobilePane = "news";
 }
 
 function selectStock(id: string): void {
+  if (filterId !== id) {
+    stockDetail = null;
+    stockDetailFor = "";
+    loadingStockDetail = false;
+    stockDetailGen += 1;
+  }
   filterId = id;
   tab = "mine";
   showNewsPane();
@@ -123,6 +130,9 @@ function addStock(hit: SearchHit | Stock): void {
   search = "";
   suggestions = [];
   tab = "mine";
+  stockDetail = null;
+  stockDetailFor = "";
+  stockDetailGen += 1;
   filterId = stock.id;
   showNewsPane();
   void refreshMine();
@@ -304,8 +314,10 @@ async function refreshStockDetail(): Promise<void> {
   const stock = stockById(filterId);
   if (!stock) return;
   if (stockDetailFor === stock.id && stockDetail && !loadingStockDetail) return;
+
+  const gen = ++stockDetailGen;
   const seeded = bundledStockDetail(stock.id);
-  if (seeded && stockDetailFor !== stock.id) {
+  if (seeded) {
     stockDetail = seeded;
     stockDetailFor = stock.id;
   }
@@ -313,6 +325,7 @@ async function refreshStockDetail(): Promise<void> {
   paint();
   try {
     const detail = await fetchStockDetail(stock);
+    if (gen !== stockDetailGen || filterId !== stock.id) return;
     if (detail) {
       stockDetail = detail;
       stockDetailFor = stock.id;
@@ -325,10 +338,12 @@ async function refreshStockDetail(): Promise<void> {
       });
     }
   } catch {
+    if (gen !== stockDetailGen || filterId !== stock.id) return;
     if (!stockDetail) {
       stockDetailFor = "";
     }
   } finally {
+    if (gen !== stockDetailGen) return;
     loadingStockDetail = false;
     paint();
   }
@@ -426,10 +441,11 @@ function watchRow(stock: Stock): string {
 function stockDetailPanel(): string {
   const stock = stockById(filterId);
   if (!stock) return "";
-  if (loadingStockDetail && !stockDetail) {
+  const matched = stockDetailFor === filterId ? stockDetail : null;
+  if (loadingStockDetail && !matched) {
     return `<section class="stock-hero sk"><div class="sk-line w40"></div><div class="sk-line"></div><div class="sk-line w70"></div></section>`;
   }
-  const q: StockDetail | null = stockDetail ?? (() => {
+  const q: StockDetail | null = matched ?? (() => {
     const hit = quoteFor(stock);
     if (!hit) return null;
     return {
