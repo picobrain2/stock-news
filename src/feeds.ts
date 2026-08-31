@@ -15,6 +15,16 @@ const CACHE_MS = 90_000;
 export const INDEX_REFRESH_MS = 15_000;
 const INDEX_CACHE_MS = 12_000;
 
+function optionalNum(raw: unknown): number | undefined {
+  if (raw == null || raw === "") return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function goodQuote(q: Quote | null | undefined): q is Quote {
+  return Boolean(q && Number.isFinite(q.price) && q.price > 0);
+}
+
 function cached<T>(key: string, ttl: number, load: () => Promise<T>): Promise<T> {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < ttl) return Promise.resolve(hit.data as T);
@@ -691,7 +701,7 @@ function parseNaverQuote(symbol: string, raw: string): Quote | null {
   if (!data.closePrice) return null;
   const price = Number(String(data.closePrice).replace(/,/g, ""));
   const changePct = Number(String(data.fluctuationsRatio ?? "0").replace(/,/g, ""));
-  if (!Number.isFinite(price)) return null;
+  if (!Number.isFinite(price) || price <= 0) return null;
   const kr = isKrSymbol(symbol);
   return {
     symbol,
@@ -707,7 +717,7 @@ function parseYahooQuote(symbol: string, raw: string): Quote | null {
   if (!parsed) return null;
   const { meta, closes } = parsed;
   const price = meta?.regularMarketPrice ?? closes.at(-1);
-  if (price == null) return null;
+  if (price == null || !Number.isFinite(price) || price <= 0) return null;
   let changePct = meta?.regularMarketChangePercent;
   const prev = meta?.previousClose ?? meta?.chartPreviousClose ?? closes[0];
   if (changePct == null && prev) {
@@ -751,6 +761,7 @@ async function fetchQuote(symbol: string): Promise<Quote | null> {
   };
 
   quote = (await fromNaver()) ?? (await fromYahoo());
+  if (!goodQuote(quote)) quote = null;
   cache.set(`quote:${symbol}`, { at: Date.now(), data: quote });
   return quote;
 }
@@ -912,16 +923,16 @@ export async function searchSymbols(query: string): Promise<SearchHit[]> {
           const kr = yahoo.endsWith(".KS") || yahoo.endsWith(".KQ");
           const id = kr ? yahoo.replace(/\.(KS|KQ)$/i, "") : yahoo;
           const name = x.shortname || x.longname || yahoo;
-          const price = Number(x.regularMarketPrice);
-          const changePct = Number(x.regularMarketChangePercent);
+          const price = optionalNum(x.regularMarketPrice);
+          const changePct = optionalNum(x.regularMarketChangePercent);
           return {
             id,
             name,
             nameEn: x.longname || name,
             yahoo,
             market: kr ? "kr" as const : "us" as const,
-            price: Number.isFinite(price) ? price : undefined,
-            changePct: Number.isFinite(changePct) ? changePct : undefined,
+            price,
+            changePct,
             currency: kr ? "KRW" : "USD",
           };
         });

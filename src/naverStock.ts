@@ -108,7 +108,7 @@ export async function getStockDetail(
     return null;
   }
   const price = num(basic.closePrice);
-  if (!Number.isFinite(price)) return null;
+  if (!Number.isFinite(price) || price <= 0) return null;
 
   let integration: NaverIntegration = {};
   if (integResult.status === "fulfilled") {

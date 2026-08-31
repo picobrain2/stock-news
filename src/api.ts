@@ -130,14 +130,14 @@ export async function fetchQuotes(stocks: Stock[], previous: Quote[] = [], live 
     fromFile = take(bundledQuotes());
     rows = mergeQuotes(rows, fromFile);
   }
-  if (!live) return rows;
-  const have = new Set(rows.map((q) => q.symbol));
+  if (!live) return rows.filter((q) => q.price > 0);
+  const have = new Set(rows.filter((q) => q.price > 0).map((q) => q.symbol));
   const missing = stocks.map((s) => s.yahoo).filter((symbol) => !have.has(symbol));
-  if (missing.length === 0) return rows;
+  if (missing.length === 0) return rows.filter((q) => q.price > 0);
   try {
-    return mergeQuotes(rows, take(await getQuotes(missing)));
+    return mergeQuotes(rows, take(await getQuotes(missing))).filter((q) => q.price > 0);
   } catch {
-    return rows;
+    return rows.filter((q) => q.price > 0);
   }
 }
 
@@ -169,7 +169,8 @@ export function bundledStockDetail(id: string): StockDetail | undefined {
 export async function fetchQuoteQuick(stock: Stock): Promise<Quote | null> {
   try {
     const rows = await getQuotes([stock.yahoo]);
-    return rows[0] ?? null;
+    const q = rows[0];
+    return q && q.price > 0 ? q : null;
   } catch {
     return null;
   }
@@ -187,13 +188,15 @@ export async function fetchStockDetail(stock: Stock): Promise<StockDetail | null
     return data.detail ?? null;
   }
   const cached = bundledStockDetail(stock.id);
-  const yahooQuick = stock.market === "us"
-    ? fetchQuoteQuick(stock)
-    : Promise.resolve(null);
-  const naverLive = getStockDetail(stock, fetchText).catch(() => null);
-  const [live, yahooQ] = await Promise.all([naverLive, yahooQuick]);
-  if (live) return live;
-  if (yahooQ) return detailFromQuote(stock, yahooQ);
+  if (stock.market === "us") {
+    const yahooQ = await fetchQuoteQuick(stock);
+    if (yahooQ) return detailFromQuote(stock, yahooQ);
+    const live = await getStockDetail(stock, fetchText).catch(() => null);
+    if (live) return live;
+  } else {
+    const live = await getStockDetail(stock, fetchText).catch(() => null);
+    if (live) return live;
+  }
   if (cached) return cached;
   try {
     const data = await getJson<{ details?: Record<string, StockDetail> }>(dataUrl("details.json"));

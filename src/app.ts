@@ -76,19 +76,20 @@ function stockById(id: string): Stock | undefined {
 }
 
 function quoteFor(stock: Stock): Quote | undefined {
-  return quotes.get(stock.yahoo)
+  const q = quotes.get(stock.yahoo)
     ?? quotes.get(stock.yahoo.toUpperCase())
     ?? quotes.get(stock.id)
     ?? quotes.get(`${stock.id}.KS`)
     ?? quotes.get(`${stock.id}.KQ`);
+  return q && q.price > 0 ? q : undefined;
 }
 
 function rememberQuotes(rows: Quote[]): void {
-  quotes = new Map(rows.map((q) => [q.symbol, q]));
+  quotes = new Map(rows.filter((q) => q.price > 0).map((q) => [q.symbol, q]));
 }
 
 function seedQuote(stock: Stock, hit: SearchHit | Stock): void {
-  if (!("price" in hit) || hit.price == null || !Number.isFinite(hit.price)) return;
+  if (!("price" in hit) || hit.price == null || !Number.isFinite(hit.price) || hit.price <= 0) return;
   quotes.set(stock.yahoo, {
     symbol: stock.yahoo,
     price: hit.price,
@@ -337,7 +338,7 @@ async function refreshStockDetail(): Promise<void> {
     void fetchQuoteQuick(stock).then((q) => {
       if (!q || gen !== stockDetailGen || filterId !== stock.id) return;
       quotes.set(stock.yahoo, q);
-      if (stockDetailFor !== stock.id || !stockDetail?.stats.length) {
+      if (q && q.price > 0 && (stockDetailFor !== stock.id || !stockDetail?.stats.length)) {
         stockDetail = detailFromQuote(stock, q);
         stockDetailFor = stock.id;
         paint();
@@ -347,7 +348,7 @@ async function refreshStockDetail(): Promise<void> {
   try {
     const detail = await fetchStockDetail(stock);
     if (gen !== stockDetailGen || filterId !== stock.id) return;
-    if (detail) {
+    if (detail && detail.price > 0) {
       stockDetail = detail;
       stockDetailFor = stock.id;
       quotes.set(stock.yahoo, {
@@ -468,7 +469,7 @@ function stockDetailPanel(): string {
     if (!hit) return null;
     return detailFromQuote(stock, hit);
   })();
-  if (!q) {
+  if (!q || q.price <= 0) {
     if (loadingStockDetail) {
       return `<section class="stock-hero sk"><div class="sk-line w40"></div><div class="sk-line"></div><div class="sk-line w70"></div></section>`;
     }
