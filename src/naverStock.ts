@@ -6,6 +6,7 @@ type NaverBasic = {
   fluctuationsRatio?: string;
   compareToPreviousClosePrice?: string;
   stockExchangeName?: string;
+  stockExchangeType?: { code?: string; name?: string };
   currencyType?: { code?: string };
 };
 
@@ -105,8 +106,9 @@ export async function getStockDetail(
   const currency = basic.currencyType?.code ?? (kr ? "KRW" : "USD");
   const stats = pickStats(integration.totalInfos ?? []);
   const consensus = integration.consensusInfo;
-  const target = consensus?.priceTargetMean
-    ? (kr ? `${Number(consensus.priceTargetMean).toLocaleString("ko-KR")}원` : `$${consensus.priceTargetMean}`)
+  const targetMean = num(consensus?.priceTargetMean);
+  const target = Number.isFinite(targetMean)
+    ? (kr ? `${targetMean.toLocaleString("ko-KR")}원` : `$${targetMean.toLocaleString("en-US")}`)
     : undefined;
 
   return {
@@ -116,7 +118,7 @@ export async function getStockDetail(
     changePct: num(basic.fluctuationsRatio) || 0,
     change: basic.compareToPreviousClosePrice,
     currency,
-    exchange: basic.stockExchangeName ?? (kr ? "KOSPI" : "NASDAQ"),
+    exchange: basic.stockExchangeName ?? basic.stockExchangeType?.name ?? (kr ? "KOSPI" : "NASDAQ"),
     stats,
     targetPrice: target,
     recommend: consensus?.recommMean,

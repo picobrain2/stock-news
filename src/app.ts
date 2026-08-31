@@ -1,5 +1,5 @@
 import { classifyTone } from "./impact";
-import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuotes, fetchReview, fetchStockDetail, fetchStockNews, lastPulls, searchRemote } from "./api";
+import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStockDetail, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuotes, fetchReview, fetchStockDetail, fetchStockNews, lastPulls, searchRemote } from "./api";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
 import { sparkPath } from "./indices";
@@ -303,14 +303,19 @@ async function refreshStockDetail(): Promise<void> {
   }
   const stock = stockById(filterId);
   if (!stock) return;
-  if (stockDetailFor === stock.id && stockDetail) return;
+  if (stockDetailFor === stock.id && stockDetail && !loadingStockDetail) return;
+  const seeded = bundledStockDetail(stock.id);
+  if (seeded && stockDetailFor !== stock.id) {
+    stockDetail = seeded;
+    stockDetailFor = stock.id;
+  }
   loadingStockDetail = true;
   paint();
   try {
     const detail = await fetchStockDetail(stock);
-    stockDetail = detail;
-    stockDetailFor = stock.id;
     if (detail) {
+      stockDetail = detail;
+      stockDetailFor = stock.id;
       quotes.set(stock.yahoo, {
         symbol: stock.yahoo,
         price: detail.price,
@@ -320,8 +325,9 @@ async function refreshStockDetail(): Promise<void> {
       });
     }
   } catch {
-    stockDetail = null;
-    stockDetailFor = "";
+    if (!stockDetail) {
+      stockDetailFor = "";
+    }
   } finally {
     loadingStockDetail = false;
     paint();

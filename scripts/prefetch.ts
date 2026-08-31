@@ -1,11 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "../src/archive";
 import { defaultWatchlist, popularStocks } from "../src/catalog";
-import { enrichSnippets, getIndexBoard, getMarketNews, getQuotes, getStockNews } from "../src/feeds";
+import { enrichSnippets, fetchText, getIndexBoard, getMarketNews, getQuotes, getStockNews } from "../src/feeds";
 import { mergeIndices } from "../src/indices";
+import { getStockDetail } from "../src/naverStock";
 import { buildReviewBundle } from "../src/review";
 import { translateNews } from "../src/translate";
-import type { IndexQuote, NewsItem, Quote, SourcePull } from "../src/types";
+import type { IndexQuote, NewsItem, Quote, SourcePull, Stock, StockDetail } from "../src/types";
 
 const outDir = new URL("../public/data/", import.meta.url);
 const snapshotFile = new URL("../src/snapshot.json", import.meta.url);
@@ -59,6 +60,19 @@ async function writeJson(url: URL, body: unknown): Promise<void> {
   await writeFile(url, JSON.stringify(body));
 }
 
+async function prefetchStockDetails(stockList: Stock[]): Promise<Record<string, StockDetail>> {
+  const details: Record<string, StockDetail> = {};
+  for (const stock of stockList) {
+    try {
+      const row = await getStockDetail(stock, fetchText);
+      if (row) details[stock.id] = row;
+    } catch (err) {
+      console.error(`detail failed ${stock.id}`, err);
+    }
+  }
+  return details;
+}
+
 async function main(): Promise<void> {
   const stocks = [...new Map(
     [...defaultWatchlist(), ...popularStocks()].map((s) => [s.id, s]),
@@ -92,6 +106,7 @@ async function main(): Promise<void> {
   } catch (err) {
     console.error("review failed", err);
   }
+  const stockDetails = await prefetchStockDetails(stocks);
   await mkdir(outDir, { recursive: true });
   const marketBody = { items: marketMerged, pulls: pullsMerged, fetchedAt };
   const stocksBody = { items: stocksMerged, fetchedAt };
@@ -101,6 +116,7 @@ async function main(): Promise<void> {
   await writeJson(new URL("stocks.json", outDir), stocksBody);
   await writeJson(new URL("quotes.json", outDir), quotesBody);
   await writeJson(new URL("indices.json", outDir), indicesBody);
+  await writeJson(new URL("details.json", outDir), { details: stockDetails, fetchedAt });
   await writeJson(new URL("review.json", outDir), reviewBundle);
   await writeJson(new URL("../src/review.json", import.meta.url), reviewBundle);
   await writeJson(snapshotFile, {
@@ -108,6 +124,7 @@ async function main(): Promise<void> {
     stocks: stocksMerged,
     quotes: quotesMerged,
     indices: indicesMerged,
+    stockDetails,
     pulls: pullsMerged,
     fetchedAt,
   });

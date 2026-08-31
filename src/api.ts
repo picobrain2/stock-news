@@ -11,6 +11,7 @@ const snapshot = rawSnapshot as unknown as {
   stocks: NewsItem[];
   quotes: Quote[];
   indices?: IndexQuote[];
+  stockDetails?: Record<string, StockDetail>;
   pulls?: SourcePull[];
   fetchedAt: number;
 };
@@ -154,6 +155,10 @@ export async function fetchIndices(previous: IndexQuote[] = []): Promise<IndexQu
   }
 }
 
+export function bundledStockDetail(id: string): StockDetail | undefined {
+  return snapshot.stockDetails?.[id];
+}
+
 export async function fetchStockDetail(stock: Stock): Promise<StockDetail | null> {
   if (localApi) {
     const q = new URLSearchParams({
@@ -165,7 +170,20 @@ export async function fetchStockDetail(stock: Stock): Promise<StockDetail | null
     const data = await getJson<{ detail: StockDetail | null }>(`/api/stock-detail?${q}`);
     return data.detail ?? null;
   }
-  return getStockDetail(stock, fetchText);
+  try {
+    const live = await getStockDetail(stock, fetchText);
+    if (live) return live;
+  } catch {
+    /* fall back to prefetch */
+  }
+  const cached = bundledStockDetail(stock.id);
+  if (cached) return cached;
+  try {
+    const data = await getJson<{ details?: Record<string, StockDetail> }>(dataUrl("details.json"));
+    return data.details?.[stock.id] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function searchRemote(query: string): Promise<SearchHit[]> {

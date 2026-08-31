@@ -48,19 +48,21 @@ function proxyUrls(url: string): string[] {
 }
 
 function unwrapBody(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed.startsWith("{")) return raw;
+  let text = raw.trim();
+  const jina = text.match(/Markdown Content:\s*\r?\n([\s\S]*)/i);
+  if (jina?.[1]) text = jina[1].trim();
+  if (!text.startsWith("{") && !text.startsWith("[")) return text;
   try {
-    const obj = JSON.parse(trimmed) as {
+    const obj = JSON.parse(text) as {
       contents?: string;
       data?: { content?: string };
     };
     if (typeof obj.data?.content === "string" && obj.data.content) return obj.data.content;
     if (typeof obj.contents === "string" && obj.contents) return obj.contents;
   } catch {
-    return raw;
+    return text;
   }
-  return raw;
+  return text;
 }
 
 async function fetchVia(target: string, timeoutMs: number): Promise<string> {
