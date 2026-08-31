@@ -1,5 +1,5 @@
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "./archive";
-import { fetchText, getQuotes, searchSymbols } from "./feeds";
+import { fetchText, getIndexBoard, getQuotes, searchSymbols } from "./feeds";
 import { getStockDetail } from "./naverStock";
 import { mergeIndices } from "./indices";
 import rawReview from "./review.json";
@@ -141,17 +141,24 @@ export async function fetchQuotes(stocks: Stock[], previous: Quote[] = [], live 
   }
 }
 
-export async function fetchIndices(previous: IndexQuote[] = []): Promise<IndexQuote[]> {
+export async function fetchIndices(previous: IndexQuote[] = [], live = true): Promise<IndexQuote[]> {
   const seed = previous.length ? previous : bundledIndices();
   if (localApi) {
     const data = await getJson<{ indices: IndexQuote[] }>("/api/indices");
     return mergeIndices(seed, data.indices ?? []);
   }
+  let rows = mergeIndices([], seed);
   try {
     const data = await getJson<{ indices?: IndexQuote[] }>(dataUrl("indices.json"));
-    return mergeIndices(seed, data.indices ?? []);
+    rows = mergeIndices(rows, data.indices ?? []);
   } catch {
-    return seed;
+    rows = mergeIndices(rows, bundledIndices());
+  }
+  if (!live) return rows;
+  try {
+    return mergeIndices(rows, await getIndexBoard());
+  } catch {
+    return rows;
   }
 }
 

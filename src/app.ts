@@ -295,7 +295,11 @@ async function refreshQuotes(): Promise<void> {
 
 async function refreshIndices(): Promise<void> {
   try {
-    indices = await fetchIndices(indices);
+    if (!indices.length) {
+      indices = await fetchIndices([], false);
+      paint();
+    }
+    indices = await fetchIndices(indices, true);
   } catch {
     /* indices are optional */
   } finally {
@@ -750,6 +754,9 @@ export function render(): void {
   window.setInterval(() => {
     void refreshAll();
   }, 180_000);
+  window.setInterval(() => {
+    void refreshIndices();
+  }, 90_000);
   window.setInterval(() => paint(), 30_000);
 
   window.addEventListener("keydown", (event) => {
