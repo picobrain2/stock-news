@@ -428,15 +428,77 @@ body { background: var(--bg); color: var(--text); }
 }
 .muted { color: var(--muted); font-size: 12px; }
 
+.mob-nav { display: none; }
+
 @media (max-width: 860px) {
-  .shell { grid-template-columns: 1fr; }
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+    height: 100dvh;
+  }
+  .side,
+  .main {
+    grid-column: 1;
+    grid-row: 1;
+    min-height: 0;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
   .side {
     border-right: 0;
-    border-bottom: 1px solid var(--line);
-    max-height: none;
+    border-bottom: 0;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   }
-  .main { padding: 14px 14px 28px; }
+  .main {
+    padding: 14px 14px 20px;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+  .shell.mobile-pane-news .side { display: none; }
+  .shell.mobile-pane-watch .main { display: none; }
+  .mob-nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-column: 1;
+    grid-row: 2;
+    gap: 0;
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .mob-nav-btn {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 650;
+    padding: 12px 10px 10px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .mob-nav-btn.on {
+    color: var(--gold);
+    box-shadow: inset 0 2px 0 var(--gold);
+  }
+  .mob-nav-badge {
+    min-width: 18px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: #222a38;
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .mob-nav-btn.on .mob-nav-badge {
+    background: color-mix(in srgb, var(--gold) 22%, #222a38);
+    color: var(--gold);
+  }
   .watchlist { grid-template-columns: 1fr; }
   .themes { grid-template-columns: 1fr; }
   .board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .top { position: sticky; top: 0; z-index: 2; background: var(--bg); padding-bottom: 6px; margin-bottom: 4px; }
 }

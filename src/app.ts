@@ -31,6 +31,12 @@ let loadingReview = !reviewBundle.week;
 let searchTimer = 0;
 let indices: IndexQuote[] = boot.indices?.length ? boot.indices : bundledIndices();
 let loadingIndices = indices.length === 0;
+type MobilePane = "news" | "watch";
+let mobilePane: MobilePane = "news";
+
+function showNewsPane(): void {
+  mobilePane = "news";
+}
 
 function esc(value: string): string {
   return value.replace(/[&<>"']/g, (ch) => (
@@ -100,6 +106,7 @@ function addStock(hit: SearchHit | Stock): void {
   suggestions = [];
   tab = "mine";
   filterId = stock.id;
+  showNewsPane();
   void refreshMine();
   void refreshQuotes().then(() => persist());
   paint();
@@ -391,7 +398,7 @@ function paint(): void {
   const pop = popularStocks().filter((s) => !watchlist.some((w) => w.id === s.id)).slice(0, 10);
 
   app.innerHTML = `
-    <div class="shell">
+    <div class="shell mobile-pane-${mobilePane}">
       <aside class="side">
         <button class="brand" data-home>
           <span class="logo">시황</span>
@@ -471,6 +478,10 @@ function paint(): void {
           ${lastFetch ? `뉴스 수집 ${esc(fromNow(lastFetch))}` : ""} · ${tab === "review" ? "1주일 · 1개월 · 1년 정리" : "하루치 보관 · 새 소식만 추가"}
         </footer>
       </main>
+      <nav class="mob-nav" aria-label="화면 전환">
+        <button type="button" class="mob-nav-btn${mobilePane === "news" ? " on" : ""}" data-pane="news">뉴스</button>
+        <button type="button" class="mob-nav-btn${mobilePane === "watch" ? " on" : ""}" data-pane="watch">관심종목<span class="mob-nav-badge">${watchlist.length}</span></button>
+      </nav>
     </div>
   `;
 
@@ -522,6 +533,13 @@ function bind(): void {
     if (home) {
       tab = "market";
       filterId = "all";
+      showNewsPane();
+      paint();
+      return;
+    }
+    const paneBtn = t.closest<HTMLElement>("[data-pane]");
+    if (paneBtn?.dataset.pane === "news" || paneBtn?.dataset.pane === "watch") {
+      mobilePane = paneBtn.dataset.pane;
       paint();
       return;
     }
@@ -529,6 +547,7 @@ function bind(): void {
     if (tabBtn?.dataset.tab === "market" || tabBtn?.dataset.tab === "mine" || tabBtn?.dataset.tab === "review") {
       tab = tabBtn.dataset.tab;
       if (tab === "market") filterId = "all";
+      showNewsPane();
       paint();
       return;
     }
@@ -536,6 +555,7 @@ function bind(): void {
     if (spanBtn?.dataset.span === "week" || spanBtn?.dataset.span === "month" || spanBtn?.dataset.span === "year") {
       reviewRange = spanBtn.dataset.span;
       tab = "review";
+      showNewsPane();
       paint();
       return;
     }
@@ -567,6 +587,7 @@ function bind(): void {
     if (filter?.dataset.filter) {
       filterId = filter.dataset.filter;
       tab = "mine";
+      showNewsPane();
       paint();
       return;
     }
@@ -574,6 +595,7 @@ function bind(): void {
     if (open?.dataset.open) {
       tab = "mine";
       filterId = open.dataset.open;
+      showNewsPane();
       paint();
     }
   });
