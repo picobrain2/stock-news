@@ -44,19 +44,6 @@ function formatSparkDate(date: Date): string {
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-export function sparkTimeLabels(pointCount: number, now = Date.now()): { start: string; end: string } {
-  if (pointCount < 2) return { start: "", end: "" };
-  const end = new Date(now);
-  const cursor = new Date(now);
-  let trading = 0;
-  while (trading < pointCount - 1) {
-    cursor.setDate(cursor.getDate() - 1);
-    const dow = cursor.getDay();
-    if (dow !== 0 && dow !== 6) trading += 1;
-  }
-  return { start: formatSparkDate(cursor), end: formatSparkDate(end) };
-}
-
 export interface SparkChart {
   line: string;
   area: string;
@@ -65,15 +52,17 @@ export interface SparkChart {
   labels: { start: string; end: string };
   min: number;
   max: number;
+  lastX: number;
+  lastY: number;
 }
 
-export function buildSparkChart(values: number[], width = 168, height = 46): SparkChart | null {
+export function buildSparkChart(values: number[], width = 180, height = 58): SparkChart | null {
   const nums = downsample(values, 40);
   if (nums.length < 2) return null;
   const min = Math.min(...nums);
   const max = Math.max(...nums);
   const span = max - min || 1;
-  const padY = 4;
+  const padY = 5;
   const innerH = height - padY * 2;
   const points = nums.map((v, i) => ({
     x: (i / (nums.length - 1)) * width,
@@ -81,14 +70,28 @@ export function buildSparkChart(values: number[], width = 168, height = 46): Spa
   }));
   const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
   const area = `${line} L${width.toFixed(1)} ${height} L0 ${height} Z`;
+  const last = points[points.length - 1]!;
+  const end = new Date();
+  const start = new Date();
+  let trading = 0;
+  while (trading < nums.length - 1) {
+    start.setDate(start.getDate() - 1);
+    if (start.getDay() !== 0 && start.getDay() !== 6) trading += 1;
+  }
+  const sameDay = end.toDateString() === new Date().toDateString();
   return {
     line,
     area,
     width,
     height,
-    labels: sparkTimeLabels(nums.length),
+    labels: {
+      start: formatSparkDate(start),
+      end: sameDay ? "오늘" : formatSparkDate(end),
+    },
     min,
     max,
+    lastX: last.x,
+    lastY: last.y,
   };
 }
 

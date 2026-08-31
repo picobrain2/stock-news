@@ -329,7 +329,7 @@ async function refreshQuotesInner(): Promise<void> {
 }
 
 function shouldPollIndices(): boolean {
-  return tab === "market" && document.visibilityState === "visible";
+  return (tab === "market" || tab === "mine") && document.visibilityState === "visible";
 }
 
 async function refreshIndices(): Promise<void> {
@@ -556,12 +556,14 @@ function indexCard(row: IndexQuote): string {
         <line class="spark-grid" x1="0" y1="${(chart.height * 0.33).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.33).toFixed(1)}"></line>
         <line class="spark-grid" x1="0" y1="${(chart.height * 0.66).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.66).toFixed(1)}"></line>
         <path class="spark-area" d="${chart.area}" fill="url(#${gradId})"></path>
-        <path class="spark-line" d="${chart.line}" fill="none" stroke="${color}" stroke-width="1.8" vector-effect="non-scaling-stroke"></path>
+        <path class="spark-line" d="${chart.line}" fill="none" stroke="${color}" stroke-width="2.2" vector-effect="non-scaling-stroke"></path>
+        <circle class="spark-dot-halo" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="6" fill="${color}" opacity="0.18"></circle>
+        <circle class="spark-dot" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="3" fill="${color}"></circle>
       </svg>
       <div class="spark-axis">
-        <span>${esc(chart.labels.start)}</span>
+        <span class="spark-date">${esc(chart.labels.start)}</span>
         <span class="spark-range">${esc(formatIndexPrice(chart.min))} – ${esc(formatIndexPrice(chart.max))}</span>
-        <span>${esc(chart.labels.end)}</span>
+        <span class="spark-date end">${esc(chart.labels.end)}</span>
       </div>
     </div>
   ` : `<div class="spark-gap"><span class="muted">차트 없음</span></div>`;
@@ -579,10 +581,10 @@ function indexCard(row: IndexQuote): string {
 
 function indexBoard(): string {
   if (!indices.length && loadingIndices) {
-    return `<section class="board">${Array.from({ length: 8 }, () => `<article class="index sk"><div class="sk-line w40"></div><div class="sk-line"></div><div class="sk-line w70"></div></article>`).join("")}</section>`;
+    return `<div class="board-wrap"><div class="board-head"><h2 class="board-label">주요 지수</h2><span class="board-hint">불러오는 중</span></div><section class="board">${Array.from({ length: 8 }, () => `<article class="index sk"><div class="sk-line w40"></div><div class="sk-line"></div><div class="sk-line w70"></div></article>`).join("")}</section></div>`;
   }
   if (!indices.length) return "";
-  return `<section class="board">${indices.map(indexCard).join("")}</section>`;
+  return `<div class="board-wrap"><div class="board-head"><h2 class="board-label">주요 지수</h2><span class="board-hint">최근 1개월 · 일봉</span></div><section class="board">${indices.map(indexCard).join("")}</section></div>`;
 }
 
 function paint(): void {
@@ -659,6 +661,7 @@ function paint(): void {
         </header>
         ${tab === "review" ? reviewPane() : `
         ${tab === "mine" ? `
+          ${indexBoard()}
           <div class="filters">
             <button class="chip${filterId === "all" ? " on" : ""}" data-filter="all">전체</button>
             ${watchlist.map((s) => `<button class="chip${filterId === s.id ? " on" : ""}" data-filter="${esc(s.id)}">${esc(s.name)}</button>`).join("")}
