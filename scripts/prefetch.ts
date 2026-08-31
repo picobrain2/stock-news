@@ -107,6 +107,7 @@ async function main(): Promise<void> {
     market: marketMerged,
     stocks: stocksMerged,
     quotes: quotesMerged,
+    indices: indicesMerged,
     pulls: pullsMerged,
     fetchedAt,
   });

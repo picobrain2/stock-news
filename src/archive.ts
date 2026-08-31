@@ -1,6 +1,6 @@
 import { betterSnippet, needsKorean } from "./text";
 import { pickPublishedAt } from "./time";
-import type { NewsItem, Quote, SourcePull } from "./types";
+import type { IndexQuote, NewsItem, Quote, SourcePull } from "./types";
 
 const KEY = "sihwang.archive.v1";
 const DAY_MS = 86_400_000;
@@ -9,12 +9,13 @@ export interface NewsArchive {
   market: NewsItem[];
   stocks: NewsItem[];
   quotes: Quote[];
+  indices?: IndexQuote[];
   pulls: SourcePull[];
   fetchedAt: number;
 }
 
 function emptyArchive(): NewsArchive {
-  return { market: [], stocks: [], quotes: [], pulls: [], fetchedAt: 0 };
+  return { market: [], stocks: [], quotes: [], indices: [], pulls: [], fetchedAt: 0 };
 }
 
 function newsKey(item: NewsItem): string {
@@ -94,6 +95,7 @@ export function loadArchive(): NewsArchive {
       market: pruneNews(parsed.market),
       stocks: pruneNews(parsed.stocks ?? []),
       quotes: Array.isArray(parsed.quotes) ? parsed.quotes : [],
+      indices: Array.isArray(parsed.indices) ? parsed.indices : [],
       pulls: Array.isArray(parsed.pulls) ? parsed.pulls : [],
       fetchedAt: parsed.fetchedAt ?? 0,
     };
@@ -107,6 +109,7 @@ export function saveArchive(archive: NewsArchive): void {
     market: pruneNews(archive.market),
     stocks: pruneNews(archive.stocks),
     quotes: archive.quotes,
+    indices: archive.indices ?? [],
     pulls: archive.pulls ?? [],
     fetchedAt: archive.fetchedAt || Date.now(),
   };

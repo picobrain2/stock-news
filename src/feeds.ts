@@ -41,9 +41,8 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 
 function proxyUrls(url: string): string[] {
   return [
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     `https://r.jina.ai/${url}`,
-    `https://corsproxy.org/?${encodeURIComponent(url)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   ];
 }
 
@@ -63,40 +62,54 @@ function unwrapBody(raw: string): string {
   return raw;
 }
 
-async function fetchText(url: string, timeoutMs = 9000): Promise<string> {
-  const targets = isBrowser ? proxyUrls(url) : [url];
-  let lastError = "fetch failed";
-  for (const target of targets) {
+async function fetchVia(target: string, timeoutMs: number): Promise<string> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(target, {
+      signal: ctrl.signal,
+      headers: { Accept: "application/json, text/plain, application/xml, */*" },
+    });
+    if (res.status === 429 || res.status === 409) throw new Error(String(res.status));
+    if (!res.ok) throw new Error(`${res.status}`);
+    const text = unwrapBody(await res.text());
+    if (!text.trim()) throw new Error("empty");
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchText(url: string, timeoutMs = 5000): Promise<string> {
+  if (!isBrowser) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const headers: Record<string, string> = {
-        Accept: "application/rss+xml, application/xml, text/xml, application/json, */*",
-      };
-      if (!isBrowser) headers["User-Agent"] = UA;
-      const res = await fetch(target, { signal: ctrl.signal, headers });
-      if (res.status === 429 || res.status === 409) {
-        lastError = String(res.status);
-        await sleep(400);
-        continue;
-      }
-      if (!res.ok) {
-        lastError = `${res.status} ${url}`;
-        continue;
-      }
-      const text = unwrapBody(await res.text());
-      if (!text.trim()) {
-        lastError = "empty";
-        continue;
-      }
-      return text;
-    } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err);
+      const res = await fetch(url, {
+        signal: ctrl.signal,
+        headers: { Accept: "application/json, application/xml, */*", "User-Agent": UA },
+      });
+      if (!res.ok) throw new Error(`${res.status} ${url}`);
+      return await res.text();
     } finally {
       clearTimeout(timer);
     }
   }
-  throw new Error(lastError);
+  const proxies = proxyUrls(url);
+  const fastMs = Math.min(timeoutMs, 3500);
+  try {
+    return await Promise.any(proxies.map((target) => fetchVia(target, fastMs)));
+  } catch {
+    let lastError = "fetch failed";
+    for (const target of proxies) {
+      try {
+        return await fetchVia(target, timeoutMs);
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+      }
+    }
+    throw new Error(lastError);
+  }
 }
 
 function decode(raw: string): string {
@@ -579,20 +592,12 @@ export async function getStockNews(stocks: StockQuery[], opts?: { light?: boolea
 
 export async function getQuotes(symbols: string[]): Promise<Quote[]> {
   const uniq = [...new Set(symbols.map((s) => s.trim()).filter(Boolean))].slice(0, 24);
-  const rows = await mapLimit(uniq, 4, async (symbol) => {
-    const quote = await fetchQuote(symbol);
-    await sleep(40);
-    return quote;
-  });
+  const rows = await Promise.all(uniq.map((symbol) => fetchQuote(symbol)));
   return rows.filter((q): q is Quote => Boolean(q));
 }
 
 export async function getIndexBoard(): Promise<IndexQuote[]> {
-  const rows = await mapLimit(INDEX_SPECS, 3, async (spec) => {
-    const row = await fetchIndex(spec);
-    await sleep(60);
-    return row;
-  });
+  const rows = await Promise.all(INDEX_SPECS.map((spec) => fetchIndex(spec)));
   return rows.filter((row): row is IndexQuote => Boolean(row));
 }
 
@@ -717,11 +722,7 @@ async function fetchQuote(symbol: string): Promise<Quote | null> {
     return null;
   };
 
-  if (isBrowser || !kr) {
-    quote = (await fromYahoo()) ?? (await fromNaver());
-  } else {
-    quote = (await fromNaver()) ?? (await fromYahoo());
-  }
+  quote = (await fromNaver()) ?? (await fromYahoo());
   cache.set(`quote:${symbol}`, { at: Date.now(), data: quote });
   return quote;
 }
@@ -771,46 +772,31 @@ async function fetchNaverIndex(spec: IndexSpec): Promise<IndexQuote | null> {
   const src = spec.naver;
   if (!src) return null;
   if (src.kind === "kr") {
-    const basic = JSON.parse(await fetchText(`https://m.stock.naver.com/api/index/${src.code}/basic`, 6000)) as {
-      closePrice?: string;
-      fluctuationsRatio?: string;
-    };
-    const hist = JSON.parse(
-      await fetchText(`https://m.stock.naver.com/api/index/${src.code}/price?pageSize=40&timeFrame=day`, 6000),
-    ) as { closePrice?: string }[];
+    const [basicRaw, histRaw] = await Promise.all([
+      fetchText(`https://m.stock.naver.com/api/index/${src.code}/basic`, 4000),
+      fetchText(`https://m.stock.naver.com/api/index/${src.code}/price?pageSize=40&timeFrame=day`, 4000).catch(() => "[]"),
+    ]);
+    const basic = JSON.parse(basicRaw) as { closePrice?: string; fluctuationsRatio?: string };
+    const hist = JSON.parse(histRaw) as { closePrice?: string }[];
     const closes = [...hist].reverse().map((row) => num(row.closePrice)).filter((n) => Number.isFinite(n));
     return packIndex(spec, num(basic.closePrice), num(basic.fluctuationsRatio), "KRW", closes);
   }
   if (src.kind === "world") {
-    const basic = JSON.parse(await fetchText(`https://api.stock.naver.com/index/${src.code}/basic`, 6000)) as {
-      closePrice?: string;
-      fluctuationsRatio?: string;
-    };
-    const chart = JSON.parse(
-      await fetchText(`https://api.stock.naver.com/chart/foreign/index/${src.code}?periodType=day&count=5`, 8000),
-    ) as { lastClosePrice?: number; priceInfos?: { currentPrice?: number }[] };
+    const [basicRaw, chartRaw] = await Promise.all([
+      fetchText(`https://api.stock.naver.com/index/${src.code}/basic`, 4000),
+      fetchText(`https://api.stock.naver.com/chart/foreign/index/${src.code}?periodType=day&count=5`, 5000).catch(() => "{}"),
+    ]);
+    const basic = JSON.parse(basicRaw) as { closePrice?: string; fluctuationsRatio?: string };
+    const chart = JSON.parse(chartRaw) as { lastClosePrice?: number; priceInfos?: { currentPrice?: number }[] };
     const closes = (chart.priceInfos ?? []).map((row) => num(row.currentPrice)).filter((n) => Number.isFinite(n));
     return packIndex(spec, num(basic.closePrice) || num(chart.lastClosePrice), num(basic.fluctuationsRatio), "USD", closes);
   }
   if (src.kind === "fx") {
-    const data = JSON.parse(await fetchText(`https://api.stock.naver.com/marketindex/exchange/${src.code}`, 6000)) as {
+    const data = JSON.parse(await fetchText(`https://api.stock.naver.com/marketindex/exchange/${src.code}`, 4000)) as {
       exchangeInfo?: { closePrice?: string; fluctuationsRatio?: string };
     };
     const info = data.exchangeInfo ?? {};
-    let closes: number[] = [];
-    try {
-      const html = await fetchText(`https://finance.naver.com/marketindex/exchangeDailyQuote.naver?marketindexCd=${src.code}`, 6000);
-      closes = [...html.matchAll(/<tr class="(?:up|down)">([\s\S]*?)<\/tr>/g)]
-        .map((row) => {
-          const first = row[1].match(/<td class="num">\s*([\d,.]+)/);
-          return first ? num(first[1]) : NaN;
-        })
-        .filter((n) => Number.isFinite(n))
-        .reverse();
-    } catch {
-      closes = [];
-    }
-    return packIndex(spec, num(info.closePrice), num(info.fluctuationsRatio), "KRW", closes);
+    return packIndex(spec, num(info.closePrice), num(info.fluctuationsRatio), "KRW", []);
   }
   if (src.kind === "oil") {
     const html = await fetchText(

@@ -1,5 +1,5 @@
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "./archive";
-import { getIndexBoard, getQuotes, searchSymbols } from "./feeds";
+import { getQuotes, searchSymbols } from "./feeds";
 import { mergeIndices } from "./indices";
 import rawReview from "./review.json";
 import rawSnapshot from "./snapshot.json";
@@ -9,6 +9,7 @@ const snapshot = rawSnapshot as unknown as {
   market: NewsItem[];
   stocks: NewsItem[];
   quotes: Quote[];
+  indices?: IndexQuote[];
   pulls?: SourcePull[];
   fetchedAt: number;
 };
@@ -40,6 +41,10 @@ export function bundledStocks(): NewsItem[] {
 
 export function bundledQuotes(): Quote[] {
   return snapshot.quotes ?? [];
+}
+
+export function bundledIndices(): IndexQuote[] {
+  return snapshot.indices ?? [];
 }
 
 export function bundledPulls(): SourcePull[] {
@@ -104,7 +109,7 @@ export async function fetchStockNews(stocks: Stock[], previous: NewsItem[] = [])
   }
 }
 
-export async function fetchQuotes(stocks: Stock[], previous: Quote[] = []): Promise<Quote[]> {
+export async function fetchQuotes(stocks: Stock[], previous: Quote[] = [], live = true): Promise<Quote[]> {
   if (stocks.length === 0) return [];
   const wanted = new Set(stocks.map((s) => s.yahoo));
   const take = (rows: Quote[]) => rows.filter((q) => wanted.has(q.symbol));
@@ -123,6 +128,7 @@ export async function fetchQuotes(stocks: Stock[], previous: Quote[] = []): Prom
     fromFile = take(bundledQuotes());
     rows = mergeQuotes(rows, fromFile);
   }
+  if (!live) return rows;
   const have = new Set(fromFile.map((q) => q.symbol));
   const missing = stocks.map((s) => s.yahoo).filter((symbol) => !have.has(symbol));
   if (missing.length === 0) return rows;
@@ -134,22 +140,16 @@ export async function fetchQuotes(stocks: Stock[], previous: Quote[] = []): Prom
 }
 
 export async function fetchIndices(previous: IndexQuote[] = []): Promise<IndexQuote[]> {
+  const seed = previous.length ? previous : bundledIndices();
   if (localApi) {
     const data = await getJson<{ indices: IndexQuote[] }>("/api/indices");
-    return mergeIndices(previous, data.indices ?? []);
+    return mergeIndices(seed, data.indices ?? []);
   }
-  let rows = previous;
   try {
     const data = await getJson<{ indices?: IndexQuote[] }>(dataUrl("indices.json"));
-    rows = mergeIndices(rows, data.indices ?? []);
+    return mergeIndices(seed, data.indices ?? []);
   } catch {
-    /* live fill below */
-  }
-  if (rows.length >= 6) return rows;
-  try {
-    return mergeIndices(rows, await getIndexBoard());
-  } catch {
-    return rows;
+    return seed;
   }
 }
 

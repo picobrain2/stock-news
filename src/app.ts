@@ -1,5 +1,5 @@
 import { classifyTone } from "./impact";
-import { bundledMarket, bundledPulls, bundledQuotes, bundledReview, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuotes, fetchReview, fetchStockNews, lastPulls, searchRemote } from "./api";
+import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuotes, fetchReview, fetchStockNews, lastPulls, searchRemote } from "./api";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
 import { sparkPath } from "./indices";
@@ -29,8 +29,8 @@ let reviewRange: ReviewRange = "week";
 let reviewBundle: ReviewBundle = bundledReview();
 let loadingReview = !reviewBundle.week;
 let searchTimer = 0;
-let indices: IndexQuote[] = [];
-let loadingIndices = true;
+let indices: IndexQuote[] = boot.indices?.length ? boot.indices : bundledIndices();
+let loadingIndices = indices.length === 0;
 
 function esc(value: string): string {
   return value.replace(/[&<>"']/g, (ch) => (
@@ -118,6 +118,7 @@ async function persist(): Promise<void> {
     market: marketNews,
     stocks: stockNews,
     quotes: [...quotes.values()],
+    indices,
     pulls: sourcePulls,
     fetchedAt: bundleFetchedAt || lastFetch || Date.now(),
   });
@@ -125,7 +126,8 @@ async function persist(): Promise<void> {
 
 async function refreshAll(): Promise<void> {
   error = "";
-  await Promise.all([refreshMarket(), refreshMine(), refreshQuotes(), refreshReview(), refreshIndices()]);
+  void refreshReview();
+  await Promise.all([refreshMarket(), refreshMine(), refreshQuotes(), refreshIndices()]);
   lastFetch = bundleFetchedAt || Date.now();
   if (lastPulls.length) sourcePulls = lastPulls;
   await persist();
@@ -244,8 +246,11 @@ async function refreshMine(): Promise<void> {
 
 async function refreshQuotes(): Promise<void> {
   try {
-    const rows = await fetchQuotes(watchlist, [...quotes.values()]);
-    rememberQuotes(rows);
+    const cached = await fetchQuotes(watchlist, [...quotes.values()], false);
+    rememberQuotes(cached);
+    paint();
+    const live = await fetchQuotes(watchlist, cached, true);
+    rememberQuotes(live);
     paint();
   } catch {
     /* quotes are optional */
@@ -253,8 +258,6 @@ async function refreshQuotes(): Promise<void> {
 }
 
 async function refreshIndices(): Promise<void> {
-  loadingIndices = indices.length === 0;
-  if (loadingIndices) paint();
   try {
     indices = await fetchIndices(indices);
   } catch {
