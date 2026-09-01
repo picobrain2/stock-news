@@ -1,5 +1,6 @@
 import { classifyTone } from "./impact";
 import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStockDetail, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuoteQuick, fetchQuotes, fetchReview, fetchStockDetail, fetchStockNews, lastPulls, loadDetailCache, searchRemote } from "./api";
+import { fetchStockSpark, INDEX_REFRESH_MS } from "./feeds";
 import { detailFromQuote, mergeStockDetail } from "./naverStock";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
