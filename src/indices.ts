@@ -28,8 +28,11 @@ export const INDEX_SPECS: IndexSpec[] = [
   { id: "usdkrw", name: "원/달러", symbol: "KRW=X", naver: { kind: "fx", code: "FX_USDKRW" } },
 ];
 
-export function indexSession(id: string): "kr" | "us" {
-  if (id === "kospi" || id === "kosdaq" || id === "usdkrw") return "kr";
+export type SessionKind = "kr" | "us" | "fx";
+
+export function indexSession(id: string): SessionKind {
+  if (id === "kospi" || id === "kosdaq") return "kr";
+  if (id === "usdkrw") return "fx";
   return "us";
 }
 
@@ -38,6 +41,7 @@ export const DISPLAY_TZ = "Asia/Seoul";
 export const SESSION_BOUNDS = {
   kr: { tz: "Asia/Seoul", open: 9 * 60, close: 15 * 60 + 30 },
   us: { tz: "America/New_York", open: 9 * 60 + 30, close: 16 * 60 },
+  fx: { tz: "Asia/Seoul", open: 0, close: 24 * 60 - 1, rollingHours: 24 },
 } as const;
 
 export function downsample(values: number[], max = 56): number[] {
@@ -76,13 +80,13 @@ function sparkQuality(row: IndexQuote): number {
   return row.spark.length + (uniq > 1 ? 20 : 0);
 }
 
-function sparkLastDate(row: Pick<IndexQuote, "sparkAt">, session: "kr" | "us"): string {
+function sparkLastDate(row: Pick<IndexQuote, "sparkAt">, session: SessionKind): string {
   const last = row.sparkAt?.at(-1);
   if (!last) return "";
   return dateKeyInTimeZone(last, SESSION_BOUNDS[session].tz);
 }
 
-function sessionToday(session: "kr" | "us", now = Date.now()): string {
+function sessionToday(session: SessionKind, now = Date.now()): string {
   return dateKeyInTimeZone(now, SESSION_BOUNDS[session].tz);
 }
 
@@ -100,13 +104,23 @@ function previousTradingDay(now: number, tz: string): string {
   return dateKeyInTimeZone(now, tz);
 }
 
-export function resolveSessionAxis(session: "kr" | "us", now = Date.now()): {
+export function resolveSessionAxis(session: SessionKind, now = Date.now()): {
   tradeDate: string;
   start: number;
   close: number;
   labelStart: string;
   labelClose: string;
 } {
+  if (session === "fx") {
+    const start = now - SESSION_BOUNDS.fx.rollingHours * 3_600_000;
+    return {
+      tradeDate: dateKeyInTimeZone(now, DISPLAY_TZ),
+      start,
+      close: now,
+      labelStart: formatSparkTime(start, DISPLAY_TZ),
+      labelClose: formatSparkTime(now, DISPLAY_TZ),
+    };
+  }
   const { tz, open, close } = SESSION_BOUNDS[session];
   const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
   const today = dateKeyInTimeZone(now, tz);
@@ -132,7 +146,12 @@ export function sanitizeIndexRows(rows: IndexQuote[], now = Date.now()): IndexQu
   });
 }
 
-export function isStaleSessionSpark(row: Pick<IndexQuote, "sparkAt">, session: "kr" | "us", now = Date.now()): boolean {
+export function isStaleSessionSpark(row: Pick<IndexQuote, "sparkAt">, session: SessionKind, now = Date.now()): boolean {
+  if (session === "fx") {
+    const last = row.sparkAt?.at(-1);
+    if (!last) return false;
+    return now - last > 90 * 60_000;
+  }
   const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
   if (!openNow) return false;
   const lastDate = sparkLastDate(row, session);
@@ -200,14 +219,18 @@ export function buildSparkChart(
   width = 180,
   height = 58,
   times?: number[],
-  session: "kr" | "us" = "kr",
+  session: SessionKind = "kr",
   now = Date.now(),
 ): SparkChart | null {
   if (values.length < 2) return null;
   const axis = resolveSessionAxis(session, now);
   const { tz } = SESSION_BOUNDS[session];
-  const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
-  const plotEnd = openNow && axis.tradeDate === dateKeyInTimeZone(now, tz) ? now : axis.close;
+  const openNow = session === "kr"
+    ? isKrMarketOpen(new Date(now))
+    : session === "us"
+      ? isUsMarketOpen(new Date(now))
+      : true;
+  const plotEnd = openNow && (session === "fx" || axis.tradeDate === dateKeyInTimeZone(now, tz)) ? now : axis.close;
   const timeSpan = axis.close - axis.start || 1;
 
   let pairs: { v: number; t: number }[] = [];
@@ -216,7 +239,7 @@ export function buildSparkChart(
       .map((v, i) => ({ v, t: times[i]! }))
       .filter((p) => p.t >= axis.start - 60_000
         && p.t <= plotEnd + 60_000
-        && dateKeyInTimeZone(p.t, tz) === axis.tradeDate);
+        && (session === "fx" || dateKeyInTimeZone(p.t, tz) === axis.tradeDate));
   }
   if (pairs.length < 2) return null;
 

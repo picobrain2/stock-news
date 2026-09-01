@@ -876,7 +876,7 @@ function indexCard(row: IndexQuote): string {
   if (isStaleSessionSpark(cardRow, session)) {
     cardRow = { ...row, spark: [], sparkAt: undefined };
   }
-  const cacheKey = `v3|${cardRow.price}|${cardRow.changePct}|${cardRow.quoteTs ?? 0}|${cardRow.spark.length}|${cardRow.sparkAt?.at(-1) ?? 0}`;
+  const cacheKey = `v4|${cardRow.price}|${cardRow.changePct}|${cardRow.quoteTs ?? 0}|${cardRow.spark.length}|${cardRow.sparkAt?.at(-1) ?? 0}`;
   const cached = indexCardCache.get(row.id);
   if (cached?.key === cacheKey) return cached.html;
 

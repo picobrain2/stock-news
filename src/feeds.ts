@@ -1,6 +1,6 @@
 import { isGoogleNewsBoilerplate, isGoogleNewsUrl, resolveGoogleNewsUrl } from "./googleNews";
 import { classifyTone, inferRegion, isMarketRelevant, isOffTopicNews, scoreImpact } from "./impact";
-import { INDEX_SPECS, indexSession, resolveSessionAxis, SESSION_BOUNDS, DISPLAY_TZ, mergeIndexQuote, type IndexSpec } from "./indices";
+import { INDEX_SPECS, indexSession, resolveSessionAxis, SESSION_BOUNDS, DISPLAY_TZ, mergeIndexQuote, type IndexSpec, type SessionKind } from "./indices";
 import { extractArticleText, extractPublishedAt, stripHtml, summarizeText } from "./text";
 import { dateKeyInTimeZone, isKrMarketOpen, isUsMarketOpen, minutesInTimeZone, parseNewsDate, pickPublishedAt, rangeWindow, tsAtSessionMinute } from "./time";
 import type { IndexQuote, NewsItem, Quote, SearchHit, SourcePull, ReviewRange, Stock } from "./types";
@@ -671,7 +671,7 @@ export async function getIndexBoard(): Promise<IndexQuote[]> {
   return rows;
 }
 
-function intradayFromYahooRaw(raw: string, session: "kr" | "us"): IntradayPoint[] {
+function intradayFromYahooRaw(raw: string, session: SessionKind): IntradayPoint[] {
   const filtered = filterIntradaySession(yahooIntraday(raw), session);
   if (filtered.length < 3) return [];
   return downsampleIntraday(padSessionSeries(filtered), 56);
@@ -698,8 +698,8 @@ function yahooChartUrl(symbol: string, interval: string, range: string): string 
 
 function preferYahooIndex(spec: IndexSpec): boolean {
   if (!isBrowser) return false;
-  if (indexSession(spec.id) === "us") return true;
-  return false;
+  const session = indexSession(spec.id);
+  return session === "us" || session === "fx";
 }
 
 function isKrSymbol(symbol: string): boolean {
@@ -767,8 +767,13 @@ function parseNaverWorldIntraday(raw: string): IntradayPoint[] {
   return out.sort((a, b) => a.t - b.t);
 }
 
-export function filterIntradaySession(points: IntradayPoint[], session: "kr" | "us", now = Date.now()): IntradayPoint[] {
+export function filterIntradaySession(points: IntradayPoint[], session: SessionKind, now = Date.now()): IntradayPoint[] {
   if (!points.length) return [];
+  if (session === "fx") {
+    const cutoff = now - SESSION_BOUNDS.fx.rollingHours * 3_600_000;
+    const day = points.filter((p) => p.t >= cutoff && p.t <= now);
+    return day.length >= 3 ? day : [];
+  }
   const { tz, open, close } = SESSION_BOUNDS[session];
   const axis = resolveSessionAxis(session, now);
   const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
@@ -1093,7 +1098,11 @@ async function fetchYahooIndex(spec: IndexSpec): Promise<IndexQuote | null> {
   const { meta } = parsed;
   const series = await fetchIntradaySeries(spec, undefined, raw);
   const session = indexSession(spec.id);
-  const liveSession = session === "us" ? isUsMarketOpen() : isKrMarketOpen();
+  const liveSession = session === "us"
+    ? isUsMarketOpen()
+    : session === "kr"
+      ? isKrMarketOpen()
+      : true;
   const lastBar = series.at(-1);
   let price = meta.regularMarketPrice ?? parsed.closes.at(-1);
   let quoteTs = meta.regularMarketTime ? meta.regularMarketTime * 1000 : undefined;
