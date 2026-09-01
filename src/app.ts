@@ -47,6 +47,8 @@ const stickyQuotes = new Map<string, Quote>();
 const stickyIndexSpark = new Map<string, Pick<IndexQuote, "spark" | "sparkAt" | "sparkTz">>();
 const stickyDetails = new Map<string, StockDetail>();
 let quotesRefresh: Promise<void> | null = null;
+let batchingRefresh = 0;
+let paintRaf = 0;
 
 function indexRowForCard(row: IndexQuote): IndexQuote {
   const sticky = stickyIndexSpark.get(row.id);
@@ -210,13 +212,23 @@ async function persist(): Promise<void> {
 }
 
 async function refreshAll(): Promise<void> {
-  error = "";
-  void refreshReview();
-  await Promise.all([refreshMarket(), refreshMine(), refreshQuotes(), refreshIndices()]);
-  lastFetch = bundleFetchedAt || Date.now();
-  if (lastPulls.length) sourcePulls = lastPulls;
-  await persist();
-  paint();
+  batchingRefresh += 1;
+  try {
+    error = "";
+    await Promise.all([
+      refreshMarket(),
+      refreshMine(),
+      refreshQuotes(),
+      refreshIndices(),
+      refreshReview(),
+    ]);
+    lastFetch = bundleFetchedAt || Date.now();
+    if (lastPulls.length) sourcePulls = lastPulls;
+    await persist();
+  } finally {
+    batchingRefresh -= 1;
+    paintImmediate();
+  }
 }
 
 async function refreshReview(): Promise<void> {
@@ -704,7 +716,24 @@ function indexBoardHint(): string {
   return "금일 장 마감 · 5분봉";
 }
 
+function paintImmediate(): void {
+  if (paintRaf) {
+    cancelAnimationFrame(paintRaf);
+    paintRaf = 0;
+  }
+  paintNow();
+}
+
 function paint(): void {
+  if (batchingRefresh > 0) return;
+  if (paintRaf) return;
+  paintRaf = requestAnimationFrame(() => {
+    paintRaf = 0;
+    paintNow();
+  });
+}
+
+function paintNow(): void {
   const active = document.activeElement;
   const keepSearch = active?.id === "q" && active instanceof HTMLInputElement;
   const selStart = keepSearch ? active.selectionStart : null;
@@ -947,7 +976,7 @@ function bind(): void {
 
 export function render(): void {
   bind();
-  paint();
+  paintImmediate();
   void refreshAll();
   window.setInterval(() => {
     void refreshAll();
