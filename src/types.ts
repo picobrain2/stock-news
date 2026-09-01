@@ -86,6 +86,8 @@ export interface StockDetail {
   targetPrice?: string;
   recommend?: string;
   naverUrl: string;
+  spark?: number[];
+  sparkAt?: number[];
 }
 
 export interface ReviewEvent {

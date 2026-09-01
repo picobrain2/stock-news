@@ -346,6 +346,19 @@ body { background: var(--bg); color: var(--text); }
   color: var(--muted);
   font-size: 13px;
 }
+.stock-chart {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(139, 151, 171, 0.12);
+}
+.stock-chart .spark {
+  height: 84px;
+}
+.stock-chart.spark-pending {
+  padding: 18px 0 6px;
+  text-align: center;
+  font-size: 13px;
+}
 .stock-target strong { color: var(--gold); }
 .stock-pending {
   margin: 8px 0 0;

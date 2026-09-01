@@ -153,16 +153,16 @@ export async function fetchIndices(previous: IndexQuote[] = [], live = true): Pr
     const data = await getJson<{ indices: IndexQuote[] }>("/api/indices");
     return mergeIndices(seed, data.indices ?? []);
   }
-  let rows = mergeIndices([], seed);
+  let rows = mergeIndices([], seed, bundledIndices());
   try {
     const data = await getJson<{ indices?: IndexQuote[] }>(dataUrl("indices.json"));
-    rows = mergeIndices(rows, data.indices ?? []);
+    rows = mergeIndices(rows, data.indices ?? [], bundledIndices());
   } catch {
-    rows = mergeIndices(rows, bundledIndices());
+    rows = mergeIndices(rows, bundledIndices(), bundledIndices());
   }
   if (!live) return rows;
   try {
-    return mergeIndices(rows, await getIndexBoard());
+    return mergeIndices(rows, await getIndexBoard(), bundledIndices());
   } catch {
     return rows;
   }

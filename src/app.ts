@@ -1,10 +1,9 @@
 import { classifyTone } from "./impact";
 import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStockDetail, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuoteQuick, fetchQuotes, fetchReview, fetchStockDetail, fetchStockNews, lastPulls, loadDetailCache, searchRemote } from "./api";
 import { detailFromQuote, mergeStockDetail } from "./naverStock";
-import { INDEX_REFRESH_MS } from "./feeds";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
-import { buildSparkChart, indexSession, isStaleSessionSpark, sanitizeIndexRows } from "./indices";
+import { buildSparkChart, INDEX_SPECS, indexSession, isStaleSessionSpark, resolveSessionAxis, sanitizeIndexRows } from "./indices";
 import { formatDay, formatIndexPrice, formatPct, formatPrice, formatRange, fromNow, isFresh, marketStatus } from "./time";
 import { cleanSnippet, needsKorean } from "./text";
 import { translateNewsItem } from "./translate";
@@ -47,6 +46,7 @@ let stockDetailGen = 0;
 const stickyQuotes = new Map<string, Quote>();
 const stickyIndexSpark = new Map<string, Pick<IndexQuote, "spark" | "sparkAt" | "sparkTz">>();
 const stickyDetails = new Map<string, StockDetail>();
+const stickyStockSpark = new Map<string, { spark: number[]; sparkAt: number[] }>();
 let quotesRefresh: Promise<void> | null = null;
 let batchingRefresh = 0;
 let paintRaf = 0;
@@ -70,6 +70,74 @@ function indexRowForCard(row: IndexQuote): IndexQuote {
   if (hasLive) return row;
   if ((sticky.spark?.length ?? 0) >= (row.spark?.length ?? 0)) return { ...row, ...sticky };
   return row;
+}
+
+function stockSession(stock: Stock): "kr" | "us" {
+  return stock.market === "kr" ? "kr" : "us";
+}
+
+function applyStockSpark(stock: Stock, pack: { spark: number[]; sparkAt: number[] }): void {
+  stickyStockSpark.set(stock.id, pack);
+  if (stockDetailFor !== stock.id || !stockDetail) return;
+  stockDetail = { ...stockDetail, spark: pack.spark, sparkAt: pack.sparkAt };
+  stickyDetails.set(stock.id, stockDetail);
+}
+
+async function refreshStockSpark(stock: Stock, gen: number): Promise<void> {
+  try {
+    const cached = stickyStockSpark.get(stock.id);
+    if (cached && stockDetailFor === stock.id && stockDetail) {
+      applyStockSpark(stock, cached);
+      paint();
+    }
+    const pack = await fetchStockSpark(stock);
+    if (!pack || gen !== stockDetailGen || filterId !== stock.id) return;
+    applyStockSpark(stock, pack);
+    paint();
+  } catch {
+    /* spark optional */
+  }
+}
+
+function stockSparkBlock(detail: StockDetail, stock: Stock): string {
+  const sticky = stickyStockSpark.get(stock.id);
+  const spark = detail.spark?.length ? detail.spark : sticky?.spark;
+  const sparkAt = detail.sparkAt?.length ? detail.sparkAt : sticky?.sparkAt;
+  if (!spark?.length || !sparkAt?.length) {
+    return `<div class="stock-chart spark-pending"><span class="muted">장중 차트 불러오는 중</span></div>`;
+  }
+  const session = stockSession(stock);
+  const chart = buildSparkChart(spark, 240, 72, sparkAt, session);
+  if (!chart) {
+    return `<div class="stock-chart spark-pending"><span class="muted">장중 차트 불러오는 중</span></div>`;
+  }
+  const axis = resolveSessionAxis(session);
+  const tone = detail.changePct > 0 ? "up" : detail.changePct < 0 ? "down" : "flat";
+  const color = tone === "up" ? "var(--up)" : tone === "down" ? "var(--down)" : "var(--muted)";
+  const gradId = `stock-spark-${stock.id}`;
+  return `
+    <div class="stock-chart">
+      <svg class="spark" viewBox="0 0 ${chart.width} ${chart.height}" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${color}" stop-opacity="0.32"></stop>
+            <stop offset="100%" stop-color="${color}" stop-opacity="0"></stop>
+          </linearGradient>
+        </defs>
+        <line class="spark-grid" x1="0" y1="${(chart.height * 0.33).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.33).toFixed(1)}"></line>
+        <line class="spark-grid" x1="0" y1="${(chart.height * 0.66).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.66).toFixed(1)}"></line>
+        <path class="spark-area" d="${chart.area}" fill="url(#${gradId})"></path>
+        <path class="spark-line" d="${chart.line}" fill="none" stroke="${color}" stroke-width="2.2" vector-effect="non-scaling-stroke"></path>
+        <circle class="spark-dot-halo" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="6" fill="${color}" opacity="0.18"></circle>
+        <circle class="spark-dot" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="3" fill="${color}"></circle>
+      </svg>
+      <div class="spark-axis">
+        <span class="spark-date">${esc(axis.labelStart)}</span>
+        <span class="spark-range">${esc(formatPrice(chart.min, detail.currency))} – ${esc(formatPrice(chart.max, detail.currency))}</span>
+        <span class="spark-date end">${esc(axis.labelClose)}</span>
+      </div>
+    </div>
+  `;
 }
 
 function rememberStockDetail(stock: Stock, incoming: StockDetail): StockDetail {
@@ -620,6 +688,7 @@ async function refreshStockDetail(): Promise<void> {
   }
   loadingStockDetail = true;
   paint();
+  void refreshStockSpark(stock, gen);
   if (!seeded && !quoteFor(stock)) {
     void fetchQuoteQuick(stock).then((q) => {
       if (!q || gen !== stockDetailGen || filterId !== stock.id) return;
@@ -783,6 +852,7 @@ function stockDetailPanel(): string {
         <span class="px-big">${esc(formatPrice(q.price, q.currency))}</span>
         <span class="${tone}">${esc(formatPct(q.changePct))}${esc(change)}</span>
       </div>
+      ${stockSparkBlock(q, stock)}
       ${pending ? `<p class="stock-pending muted">지표 불러오는 중…</p>` : ""}
       ${q.targetPrice ? `<div class="stock-target">목표가 <strong>${esc(q.targetPrice)}</strong>${q.recommend ? ` · 컨센서스 ${esc(q.recommend)}` : ""}</div>` : ""}
       ${q.stats.length ? `
@@ -827,6 +897,7 @@ function indexCard(row: IndexQuote): string {
   const tone = row.changePct > 0 ? "up" : row.changePct < 0 ? "down" : "flat";
   const color = tone === "up" ? "var(--up)" : tone === "down" ? "var(--down)" : "var(--muted)";
   const pxFmt = row.priceFormat ?? "index";
+  const axis = resolveSessionAxis(session);
   const gradId = `spark-${row.id}`;
   const chartBlock = chart ? `
     <div class="index-chart">
@@ -845,9 +916,9 @@ function indexCard(row: IndexQuote): string {
         <circle class="spark-dot" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="3" fill="${color}"></circle>
       </svg>
       <div class="spark-axis">
-        <span class="spark-date">${esc(chart.labels.start)}</span>
+        <span class="spark-date">${esc(axis.labelStart)}</span>
         <span class="spark-range">${esc(formatIndexPrice(chart.min, pxFmt))} – ${esc(formatIndexPrice(chart.max, pxFmt))}</span>
-        <span class="spark-date end">${esc(chart.labels.end)}</span>
+        <span class="spark-date end">${esc(axis.labelClose)}</span>
       </div>
     </div>
   ` : `<div class="spark-gap spark-pending"><span class="muted">차트 불러오는 중</span></div>`;
@@ -865,12 +936,27 @@ function indexCard(row: IndexQuote): string {
   return html;
 }
 
+function indexPlaceholder(name: string): string {
+  return `
+    <article class="index sk">
+      <div class="index-top"><div class="index-name">${esc(name)}</div><div class="index-chg muted">—</div></div>
+      <div class="index-px muted">—</div>
+      <div class="spark-gap spark-pending"><span class="muted">불러오는 중</span></div>
+    </article>
+  `;
+}
+
 function indexBoard(): string {
-  if (!indices.length && loadingIndices) {
-    return `<div class="board-wrap"><div class="board-head"><h2 class="board-label">주요 지수</h2><span class="board-hint">불러오는 중</span></div><section class="board">${Array.from({ length: 8 }, () => `<article class="index sk"><div class="sk-line w40"></div><div class="sk-line"></div><div class="sk-line w70"></div></article>`).join("")}</section></div>`;
+  if (loadingIndices && !indices.length) {
+    return `<div class="board-wrap"><div class="board-head"><h2 class="board-label">주요 지수</h2><span class="board-hint">불러오는 중</span></div><section class="board">${INDEX_SPECS.map((spec) => indexPlaceholder(spec.name)).join("")}</section></div>`;
   }
-  if (!indices.length) return "";
-  return `<div class="board-wrap"><div class="board-head"><h2 class="board-label">주요 지수</h2><span class="board-hint">${esc(indexBoardHint())}</span></div><section class="board">${indices.map(indexCard).join("")}</section></div>`;
+  const map = new Map(indices.map((row) => [row.id, row]));
+  const cards = INDEX_SPECS.map((spec) => {
+    const row = map.get(spec.id);
+    return row ? indexCard(row) : indexPlaceholder(spec.name);
+  });
+  if (!cards.length) return "";
+  return `<div class="board-wrap"><div class="board-head"><h2 class="board-label">주요 지수</h2><span class="board-hint">${esc(indexBoardHint())}</span></div><section class="board">${cards.join("")}</section></div>`;
 }
 
 function hasShell(): boolean {

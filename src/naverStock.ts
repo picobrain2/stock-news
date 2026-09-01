@@ -90,6 +90,8 @@ export function mergeStockDetail(base: StockDetail, patch: StockDetail): StockDe
     targetPrice: patch.targetPrice ?? base.targetPrice,
     recommend: patch.recommend ?? base.recommend,
     stats: patch.stats.length ? patch.stats : base.stats,
+    spark: (patch.spark?.length ?? 0) >= (base.spark?.length ?? 0) ? patch.spark : base.spark,
+    sparkAt: (patch.sparkAt?.length ?? 0) >= (base.sparkAt?.length ?? 0) ? patch.sparkAt : base.sparkAt,
     exchange: patch.exchange || base.exchange,
     naverUrl: patch.naverUrl || base.naverUrl,
     change: patch.change ?? base.change,

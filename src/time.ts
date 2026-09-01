@@ -151,18 +151,16 @@ export function tsAtSessionMinute(dateKey: string, minuteOfDay: number, timeZone
   if (hit != null) return hit;
 
   const [y, mo, d] = dateKey.split("-").map(Number);
-  let t = Date.UTC(y, mo - 1, d, 0, 0, 0) - 14 * 3_600_000;
-  const end = t + 48 * 3_600_000;
-  while (t < end) {
-    if (dateKeyInTimeZone(t, timeZone) === dateKey && minutesInTimeZone(t, timeZone) === minuteOfDay) {
-      sessionMinuteCache.set(cacheKey, t);
-      return t;
+  let guess = Date.UTC(y, mo - 1, d, 12, 0, 0);
+  for (let i = 0; i <= 36; i++) {
+    for (const t of [guess + i * 3_600_000, guess - i * 3_600_000]) {
+      if (dateKeyInTimeZone(t, timeZone) === dateKey && minutesInTimeZone(t, timeZone) === minuteOfDay) {
+        sessionMinuteCache.set(cacheKey, t);
+        return t;
+      }
     }
-    t += 60_000;
   }
-  const fallback = Date.UTC(y, mo - 1, d, Math.floor(minuteOfDay / 60), minuteOfDay % 60);
-  sessionMinuteCache.set(cacheKey, fallback);
-  return fallback;
+  return guess;
 }
 
 const sessionMinuteCache = new Map<string, number>();

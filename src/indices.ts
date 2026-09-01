@@ -257,8 +257,9 @@ export function buildSparkChart(
   };
 }
 
-export function mergeIndices(previous: IndexQuote[], incoming: IndexQuote[]): IndexQuote[] {
+export function mergeIndices(previous: IndexQuote[], incoming: IndexQuote[], fallback: IndexQuote[] = []): IndexQuote[] {
   const map = new Map<string, IndexQuote>();
+  for (const row of fallback) map.set(row.id, row);
   for (const row of previous) map.set(row.id, row);
   for (const row of incoming) map.set(row.id, mergeIndexQuote(map.get(row.id), row));
   return INDEX_SPECS.map((spec) => map.get(spec.id)).filter((row): row is IndexQuote => Boolean(row));

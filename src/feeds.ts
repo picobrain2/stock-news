@@ -3,7 +3,7 @@ import { classifyTone, inferRegion, isMarketRelevant, isOffTopicNews, scoreImpac
 import { INDEX_SPECS, indexSession, resolveSessionAxis, SESSION_BOUNDS, DISPLAY_TZ, mergeIndexQuote, type IndexSpec } from "./indices";
 import { extractArticleText, extractPublishedAt, stripHtml, summarizeText } from "./text";
 import { dateKeyInTimeZone, isKrMarketOpen, isUsMarketOpen, minutesInTimeZone, parseNewsDate, pickPublishedAt, rangeWindow, tsAtSessionMinute } from "./time";
-import type { IndexQuote, NewsItem, Quote, SearchHit, SourcePull, ReviewRange } from "./types";
+import type { IndexQuote, NewsItem, Quote, SearchHit, SourcePull, ReviewRange, Stock } from "./types";
 
 const isBrowser = typeof window !== "undefined";
 
@@ -671,11 +671,24 @@ export async function getIndexBoard(): Promise<IndexQuote[]> {
   return rows;
 }
 
-function intradayFromYahooRaw(raw: string, spec: IndexSpec): IntradayPoint[] {
-  const session = indexSession(spec.id);
+function intradayFromYahooRaw(raw: string, session: "kr" | "us"): IntradayPoint[] {
   const filtered = filterIntradaySession(yahooIntraday(raw), session);
   if (filtered.length < 3) return [];
-  return downsampleIntraday(padSessionSeries(filtered, session), 56);
+  return downsampleIntraday(padSessionSeries(filtered), 56);
+}
+
+export async function fetchStockSpark(stock: Stock): Promise<{ spark: number[]; sparkAt: number[] } | null> {
+  const session = stock.market === "kr" ? "kr" : "us";
+  const symbol = stock.yahoo
+    || (stock.market === "kr" ? `${stock.id.replace(/\.(KS|KQ)$/i, "")}.KS` : stock.id);
+  try {
+    const raw = await fetchText(yahooChartUrl(symbol, "5m", "1d"), 8000);
+    const points = intradayFromYahooRaw(raw, session);
+    if (points.length < 3) return null;
+    return { spark: points.map((p) => p.v), sparkAt: points.map((p) => p.t) };
+  } catch {
+    return null;
+  }
 }
 
 function yahooChartUrl(symbol: string, interval: string, range: string): string {
@@ -769,14 +782,8 @@ export function filterIntradaySession(points: IntradayPoint[], session: "kr" | "
   return day.length >= 3 ? day : [];
 }
 
-function padSessionSeries(points: IntradayPoint[], session: "kr" | "us", now = Date.now()): IntradayPoint[] {
-  if (points.length < 3) return points;
-  const axis = resolveSessionAxis(session, now);
-  let out = [...points];
-  if (out[0]!.t > axis.start + 60_000) {
-    out.unshift({ t: axis.start, v: out[0]!.v });
-  }
-  return out;
+function padSessionSeries(points: IntradayPoint[]): IntradayPoint[] {
+  return points;
 }
 
 function downsampleIntraday(points: IntradayPoint[], max = 56): IntradayPoint[] {
@@ -791,20 +798,20 @@ function downsampleIntraday(points: IntradayPoint[], max = 56): IntradayPoint[] 
 
 async function fetchIntradaySeries(spec: IndexSpec, alt?: IntradayPoint[], yahooRaw?: string): Promise<IntradayPoint[]> {
   if (yahooRaw) {
-    const fromYahoo = intradayFromYahooRaw(yahooRaw, spec);
+    const fromYahoo = intradayFromYahooRaw(yahooRaw, indexSession(spec.id));
     if (fromYahoo.length >= 3) return fromYahoo;
   }
   const session = indexSession(spec.id);
   try {
     const raw = await fetchText(yahooChartUrl(spec.symbol, "5m", "1d"), 8000);
-    const fromYahoo = intradayFromYahooRaw(raw, spec);
+    const fromYahoo = intradayFromYahooRaw(raw, indexSession(spec.id));
     if (fromYahoo.length >= 3) return fromYahoo;
   } catch {
     /* fall through */
   }
   if (alt && alt.length >= 3) {
     const filtered = filterIntradaySession(alt, session);
-    if (filtered.length >= 3) return downsampleIntraday(padSessionSeries(filtered, session), 56);
+    if (filtered.length >= 3) return downsampleIntraday(padSessionSeries(filtered), 56);
   }
   return [];
 }
