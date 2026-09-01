@@ -404,8 +404,7 @@ function wireFeedTranslate(): void {
   }
 }
 
-function addStock(hit: SearchHit | Stock): void {
-  if (watchlist.some((s) => s.id === hit.id || s.yahoo === hit.yahoo)) return;
+function pickStock(hit: SearchHit | Stock): void {
   const known = findStock(hit.id);
   const stock: Stock = known ?? {
     id: hit.id,
@@ -416,21 +415,22 @@ function addStock(hit: SearchHit | Stock): void {
     market: hit.market,
     popular: false,
   };
-  watchlist = [stock, ...watchlist].slice(0, 16);
-  saveWatchlist(watchlist);
-  seedQuote(stock, hit);
   search = "";
   suggestions = [];
-  tab = "mine";
-  stockDetail = null;
-  stockDetailFor = "";
-  stockDetailGen += 1;
-  filterId = stock.id;
-  showNewsPane();
-  void refreshMine();
-  void refreshStockDetail();
-  void refreshQuotes().then(() => persist());
-  paint();
+  const exists = watchlist.some((s) => s.id === stock.id || s.yahoo === stock.yahoo);
+  if (!exists) {
+    watchlist = [stock, ...watchlist].slice(0, 16);
+    saveWatchlist(watchlist);
+    seedQuote(stock, hit);
+    void refreshMine();
+    void refreshQuotes().then(() => persist());
+  }
+  selectStock(stock.id);
+  paintImmediate();
+}
+
+function addStock(hit: SearchHit | Stock): void {
+  pickStock(hit);
 }
 
 function removeStock(id: string): void {
@@ -1185,8 +1185,17 @@ function hitFromButton(btn: HTMLElement): SearchHit | undefined {
 }
 
 function bind(): void {
+  app.addEventListener("mousedown", (event) => {
+    const addBtn = (event.target as HTMLElement).closest<HTMLElement>("[data-add]");
+    if (!addBtn?.closest(".suggest, .chips")) return;
+    event.preventDefault();
+    const hit = hitFromButton(addBtn);
+    if (hit) pickStock(hit);
+  });
+
   app.addEventListener("click", (event) => {
     const t = event.target as HTMLElement;
+    if (t.closest("[data-add]")?.closest(".suggest, .chips")) return;
     const home = t.closest<HTMLElement>("[data-home]");
     if (home) {
       tab = "market";

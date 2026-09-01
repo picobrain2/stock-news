@@ -145,7 +145,7 @@ export function typedStock(query: string): Stock | undefined {
       popular: false,
     };
   }
-  if (/^[A-Z][A-Z0-9.]{0,9}$/.test(q) && q.length <= 10) {
+  if (/^[A-Z][A-Z0-9.]{0,9}$/.test(q) && q.length >= 3) {
     return {
       id: q.replace(".", "-"),
       name: q,
