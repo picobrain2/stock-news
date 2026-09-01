@@ -397,7 +397,7 @@ export async function getMarketNews(): Promise<{ items: NewsItem[]; pulls: Sourc
     return {
       items: mergeNews(groups)
         .filter((n) => n.publishedAt <= 0 || Date.now() - n.publishedAt < 86_400_000)
-        .slice(0, 250),
+        .slice(0, 120),
       pulls: foldPulls(pulls),
     };
   });
@@ -626,7 +626,7 @@ export async function getStockNews(stocks: StockQuery[], opts?: { light?: boolea
         tone: classifyTone(item.title, item.snippet, names).tone,
       });
     }
-    return mergeNews([tagged]).slice(0, 250);
+    return mergeNews([tagged]).slice(0, 120);
   });
 }
 

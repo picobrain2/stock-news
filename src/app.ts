@@ -6,7 +6,8 @@ import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
 import { buildSparkChart, indexSession } from "./indices";
 import { formatDay, formatIndexPrice, formatPct, formatPrice, formatRange, fromNow, isFresh, marketStatus } from "./time";
-import { cleanSnippet } from "./text";
+import { cleanSnippet, needsKorean } from "./text";
+import { translateNewsItem } from "./translate";
 import type { IndexQuote, NewsItem, Quote, ReviewBundle, ReviewRange, SearchHit, Stock, StockDetail, Tab } from "./types";
 import { loadWatchlist, saveWatchlist } from "./watchlist";
 
@@ -52,7 +53,14 @@ let paintRaf = 0;
 let indicesPoll: Promise<void> | null = null;
 let boardSignature = "";
 const indexCardCache = new Map<string, { key: string; html: string }>();
-const FEED_RENDER_CAP = 80;
+const FEED_INITIAL = 20;
+const FEED_STEP = 16;
+let feedVisibleCount = FEED_INITIAL;
+let lastFeedKey = "";
+let feedSentinelObs: IntersectionObserver | null = null;
+let feedTranslateObs: IntersectionObserver | null = null;
+const translateInflight = new Set<string>();
+const translateDone = new Set<string>();
 
 function indexRowForCard(row: IndexQuote): IndexQuote {
   const sticky = stickyIndexSpark.get(row.id);
@@ -160,13 +168,170 @@ function visibleNews(): NewsItem[] {
   });
 }
 
-function splitFeed(items: NewsItem[]): { spotlight: NewsItem[]; rest: NewsItem[] } {
+function feedContextKey(): string {
+  return `${tab}:${regionFilter}:${filterId}`;
+}
+
+function resetFeedWindowIfNeeded(): void {
+  const key = feedContextKey();
+  if (key === lastFeedKey) return;
+  lastFeedKey = key;
+  feedVisibleCount = FEED_INITIAL;
+  translateDone.clear();
+  translateInflight.clear();
+}
+
+function splitFeed(items: NewsItem[]): { spotlight: NewsItem[]; rest: NewsItem[]; hasMore: boolean } {
   const now = Date.now();
   const spotlight = items.filter((n) => n.impact >= 24 && now - n.publishedAt < 12 * 3_600_000);
   const ids = new Set(spotlight.map((n) => n.id));
-  const rest = items.filter((n) => !ids.has(n.id));
-  const room = Math.max(0, FEED_RENDER_CAP - spotlight.length);
-  return { spotlight, rest: rest.slice(0, room) };
+  const restAll = items.filter((n) => !ids.has(n.id));
+  const room = Math.max(0, feedVisibleCount - spotlight.length);
+  const rest = restAll.slice(0, room);
+  return { spotlight, rest, hasMore: rest.length < restAll.length };
+}
+
+function feedItemsShown(items: NewsItem[]): NewsItem[] {
+  const { spotlight, rest } = splitFeed(items);
+  return [...spotlight, ...rest];
+}
+
+function newsNeedsTranslation(item: NewsItem): boolean {
+  return needsKorean(item.title) || (Boolean(item.snippet) && needsKorean(item.snippet));
+}
+
+function applyNewsItem(item: NewsItem): void {
+  const list = tab === "market" ? marketNews : stockNews;
+  const index = list.findIndex((row) => row.id === item.id);
+  if (index >= 0) list[index] = item;
+}
+
+function patchNewsCard(item: NewsItem): void {
+  const card = app.querySelector<HTMLElement>(`[data-news-id="${CSS.escape(item.id)}"]`);
+  if (!card) return;
+  const titleEl = card.querySelector("h3");
+  if (titleEl) titleEl.textContent = item.title;
+  let orig = card.querySelector<HTMLElement>(".orig");
+  if (item.titleEn && item.titleEn !== item.title) {
+    if (!orig) {
+      orig = document.createElement("p");
+      orig.className = "orig";
+      titleEl?.insertAdjacentElement("afterend", orig);
+    }
+    orig.textContent = item.titleEn;
+  } else {
+    orig?.remove();
+  }
+  const snippet = cleanSnippet(item.snippet, item.title);
+  let summary = card.querySelector<HTMLElement>(".summary");
+  if (snippet) {
+    if (!summary) {
+      summary = document.createElement("p");
+      summary.className = "summary";
+      card.querySelector(".card-tags")?.insertAdjacentElement("beforebegin", summary);
+    }
+    summary.textContent = snippet;
+  } else {
+    summary?.remove();
+  }
+}
+
+async function translateCards(ids: string[]): Promise<void> {
+  const source = tab === "market" ? marketNews : stockNews;
+  const map = new Map(source.map((item) => [item.id, item]));
+  for (const id of ids.slice(0, 3)) {
+    if (translateDone.has(id) || translateInflight.has(id)) continue;
+    const item = map.get(id);
+    if (!item || !newsNeedsTranslation(item)) {
+      translateDone.add(id);
+      continue;
+    }
+    translateInflight.add(id);
+    try {
+      const updated = await translateNewsItem(item);
+      applyNewsItem(updated);
+      patchNewsCard(updated);
+      translateDone.add(id);
+    } catch {
+      /* keep original text */
+    } finally {
+      translateInflight.delete(id);
+    }
+  }
+}
+
+function appendMoreFeed(): void {
+  const feed = app.querySelector<HTMLElement>(".feed");
+  if (!feed) return;
+  const news = visibleNews();
+  const target = feedItemsShown(news);
+  const rendered = new Set(
+    [...feed.querySelectorAll<HTMLElement>("[data-news-id]")].map((el) => el.dataset.newsId ?? ""),
+  );
+  const toAdd = target.filter((item) => !rendered.has(item.id));
+  const { hasMore } = splitFeed(news);
+  const sentinel = feed.querySelector("#feed-sentinel");
+  const temp = document.createElement("div");
+  temp.innerHTML = toAdd.map(newsCard).join("");
+  const frag = document.createDocumentFragment();
+  while (temp.firstElementChild) frag.appendChild(temp.firstElementChild);
+  if (sentinel) feed.insertBefore(frag, sentinel);
+  else feed.appendChild(frag);
+  if (hasMore) {
+    if (!sentinel) {
+      const more = document.createElement("div");
+      more.id = "feed-sentinel";
+      more.className = "feed-more";
+      more.innerHTML = `<span class="muted">아래로 내리면 더 불러옵니다</span>`;
+      feed.appendChild(more);
+    }
+  } else {
+    sentinel?.remove();
+    feedSentinelObs?.disconnect();
+    feedSentinelObs = null;
+  }
+  wireFeedInfinite();
+  wireFeedTranslate();
+  void translateCards(toAdd.filter(newsNeedsTranslation).map((item) => item.id));
+}
+
+function wireFeedInfinite(): void {
+  feedSentinelObs?.disconnect();
+  const main = app.querySelector<HTMLElement>(".main");
+  const sentinel = app.querySelector("#feed-sentinel");
+  if (!main || !sentinel || tab === "review") return;
+  feedSentinelObs = new IntersectionObserver((entries) => {
+    if (!entries.some((entry) => entry.isIntersecting)) return;
+    const { hasMore } = splitFeed(visibleNews());
+    if (!hasMore) {
+      sentinel.remove();
+      feedSentinelObs?.disconnect();
+      feedSentinelObs = null;
+      return;
+    }
+    feedVisibleCount += FEED_STEP;
+    appendMoreFeed();
+  }, { root: main, rootMargin: "180px" });
+  feedSentinelObs.observe(sentinel);
+}
+
+function wireFeedTranslate(): void {
+  const main = app.querySelector<HTMLElement>(".main");
+  if (!main || tab === "review") return;
+  feedTranslateObs?.disconnect();
+  feedTranslateObs = new IntersectionObserver((entries) => {
+    const ids: string[] = [];
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const id = (entry.target as HTMLElement).dataset.newsId;
+      if (!id || translateDone.has(id) || translateInflight.has(id)) continue;
+      ids.push(id);
+    }
+    if (ids.length) void translateCards(ids);
+  }, { root: main, rootMargin: "120px", threshold: 0.08 });
+  for (const card of app.querySelectorAll<HTMLElement>("[data-news-id]")) {
+    feedTranslateObs.observe(card);
+  }
 }
 
 function addStock(hit: SearchHit | Stock): void {
@@ -536,7 +701,7 @@ function newsCard(item: NewsItem): string {
   const showTone = tab === "mine" || call.tone !== "mixed";
   const snippet = cleanSnippet(item.snippet, item.title);
   return `
-    <a class="card${fresh} tone-${call.tone}" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">
+    <a class="card${fresh} tone-${call.tone}" data-news-id="${esc(item.id)}" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">
       <div class="card-meta">
         ${showTone ? `<span class="tone ${call.tone}">${esc(toneLabel)}</span>` : ""}
         <span class="when">${item.publishedAt > 0 ? esc(fromNow(item.publishedAt)) : "시간 미상"}</span>
@@ -778,8 +943,9 @@ function paintNow(): void {
   const sideScrollTop = scrollSide?.scrollTop ?? 0;
   const status = marketStatus();
   const loading = tab === "review" ? loadingReview : tab === "market" ? loadingMarket : loadingMine;
+  resetFeedWindowIfNeeded();
   const news = visibleNews();
-  const { spotlight, rest } = splitFeed(news);
+  const { spotlight, rest, hasMore } = splitFeed(news);
   const pop = popularStocks().filter((s) => !watchlist.some((w) => w.id === s.id)).slice(0, 10);
 
   app.innerHTML = `
@@ -859,6 +1025,7 @@ function paintNow(): void {
           ${!loading && news.length === 0 ? emptyState() : ""}
           ${spotlight.length ? `<h2 class="feed-label">지금 주목</h2>${spotlight.map(newsCard).join("")}` : ""}
           ${rest.length ? `${spotlight.length ? `<h2 class="feed-label">최신</h2>` : ""}${rest.map(newsCard).join("")}` : ""}
+          ${hasMore ? `<div class="feed-more" id="feed-sentinel"><span class="muted">아래로 내리면 더 불러옵니다</span></div>` : ""}
         </section>
         `}
         <footer class="foot">
@@ -879,6 +1046,11 @@ function paintNow(): void {
   }
 
   restoreScroll(mainScrollTop, sideScrollTop);
+  if (tab !== "review") {
+    wireFeedInfinite();
+    wireFeedTranslate();
+    void translateCards(feedItemsShown(news).filter(newsNeedsTranslation).map((item) => item.id).slice(0, 6));
+  }
 }
 
 function skeleton(): string {

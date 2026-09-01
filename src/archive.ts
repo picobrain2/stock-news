@@ -60,7 +60,7 @@ export function pruneNews(items: NewsItem[], now = Date.now()): NewsItem[] {
       seen.add(key);
       return true;
     })
-    .slice(0, 250);
+    .slice(0, 120);
 }
 
 export function mergeNews(previous: NewsItem[], incoming: NewsItem[], now = Date.now()): NewsItem[] {

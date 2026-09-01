@@ -97,9 +97,35 @@ export async function translateToKo(text: string): Promise<string | null> {
   return null;
 }
 
-export async function translateNews(items: NewsItem[]): Promise<NewsItem[]> {
-  const titleNeed = items.filter((item) => needsKorean(item.title)).slice(0, 120);
-  const snipNeed = items.filter((item) => needsKorean(item.snippet)).slice(0, 80);
+export async function translateNewsItem(item: NewsItem): Promise<NewsItem> {
+  let title = item.title;
+  let titleEn = item.titleEn;
+  let snippet = item.snippet;
+  if (needsKorean(title)) {
+    const ko = await translateToKo(title);
+    if (ko) {
+      titleEn = titleEn ?? title;
+      title = ko;
+    }
+  }
+  if (snippet && needsKorean(snippet)) {
+    const ko = await translateToKo(snippet);
+    if (ko) snippet = ko;
+  }
+  return {
+    ...item,
+    title,
+    titleEn: titleEn && titleEn !== title ? titleEn : undefined,
+    snippet,
+  };
+}
+
+/** cap omitted = translate all (review). cap number = prefetch head batch only. */
+export async function translateNews(items: NewsItem[], cap?: number): Promise<NewsItem[]> {
+  const titleNeedAll = items.filter((item) => needsKorean(item.title));
+  const snipNeedAll = items.filter((item) => needsKorean(item.snippet));
+  const titleNeed = cap == null ? titleNeedAll : titleNeedAll.slice(0, cap);
+  const snipNeed = cap == null ? snipNeedAll : snipNeedAll.slice(0, Math.ceil(cap * 0.6));
   const titles = new Map<string, string>();
   const snips = new Map<string, string>();
   await mapLimit(titleNeed, 3, async (item) => {

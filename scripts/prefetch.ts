@@ -94,8 +94,8 @@ async function main(): Promise<void> {
   ]);
   const fetchedAt = Date.now();
   const [marketMerged, stocksMerged] = await Promise.all([
-    translateNews(await enrichSnippets(mergeNews(prevMarket, fresh.items))),
-    translateNews(await enrichSnippets(mergeNews(prevStocks, stockNews))),
+    translateNews(await enrichSnippets(mergeNews(prevMarket, fresh.items)), 24),
+    translateNews(await enrichSnippets(mergeNews(prevStocks, stockNews)), 24),
   ]);
   const quotesMerged = mergeQuotes(prevQuotes, quotes);
   const indicesMerged = mergeIndices(prevIndices, indices);

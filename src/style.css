@@ -405,6 +405,11 @@ body { background: var(--bg); color: var(--text); }
 }
 
 .feed { display: grid; gap: 10px; }
+.feed-more {
+  padding: 14px 0 22px;
+  text-align: center;
+  font-size: 13px;
+}
 .feed-label {
   margin: 8px 0 0;
   font-size: 13px;
