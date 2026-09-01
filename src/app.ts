@@ -4,7 +4,7 @@ import { detailFromQuote, mergeStockDetail } from "./naverStock";
 import { INDEX_REFRESH_MS } from "./feeds";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
-import { buildSparkChart, indexSession } from "./indices";
+import { buildSparkChart, indexSession, isStaleSessionSpark } from "./indices";
 import { formatDay, formatIndexPrice, formatPct, formatPrice, formatRange, fromNow, isFresh, marketStatus } from "./time";
 import { cleanSnippet, needsKorean } from "./text";
 import { translateNewsItem } from "./translate";
@@ -63,8 +63,9 @@ const translateInflight = new Set<string>();
 const translateDone = new Set<string>();
 
 function indexRowForCard(row: IndexQuote): IndexQuote {
+  const session = indexSession(row.id);
   const sticky = stickyIndexSpark.get(row.id);
-  if (!sticky) return row;
+  if (!sticky || isStaleSessionSpark(sticky, session)) return row;
   const hasLive = row.spark.length >= 3 && (row.sparkAt?.length ?? 0) >= 3;
   if (hasLive) return row;
   if ((sticky.spark?.length ?? 0) >= (row.spark?.length ?? 0)) return { ...row, ...sticky };
@@ -550,6 +551,10 @@ function shouldPollIndices(): boolean {
 function rememberIndexSpark(rows: IndexQuote[]): void {
   for (const row of rows) {
     if (row.spark.length < 2) continue;
+    const session = indexSession(row.id);
+    const prev = stickyIndexSpark.get(row.id);
+    if (prev && isStaleSessionSpark(prev, session) && isStaleSessionSpark(row, session)) continue;
+    if (prev && isStaleSessionSpark(row, session) && !isStaleSessionSpark(prev, session)) continue;
     stickyIndexSpark.set(row.id, {
       spark: row.spark,
       sparkAt: row.sparkAt,
@@ -803,12 +808,12 @@ function indexCard(row: IndexQuote): string {
   let chart = buildSparkChart(cardRow.spark, 180, 58, cardRow.sparkAt, session);
   if (!chart) {
     const sticky = stickyIndexSpark.get(row.id);
-    if (sticky) {
+    if (sticky && !isStaleSessionSpark(sticky, session)) {
       cardRow = { ...row, ...sticky };
       chart = buildSparkChart(cardRow.spark, 180, 58, cardRow.sparkAt, session);
     }
   }
-  if (chart && cardRow.spark.length >= 2) {
+  if (chart && cardRow.spark.length >= 2 && !isStaleSessionSpark(cardRow, session)) {
     stickyIndexSpark.set(row.id, {
       spark: cardRow.spark,
       sparkAt: cardRow.sparkAt,

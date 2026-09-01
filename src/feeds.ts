@@ -655,8 +655,7 @@ function yahooChartUrl(symbol: string, interval: string, range: string): string 
 
 function preferYahooIndex(spec: IndexSpec): boolean {
   if (!isBrowser) return false;
-  if (spec.naver?.kind === "world") return true;
-  if (indexSession(spec.id) === "us" && isUsMarketOpen()) return true;
+  if (indexSession(spec.id) === "us") return true;
   return false;
 }
 
@@ -727,7 +726,19 @@ function parseNaverWorldIntraday(raw: string): IntradayPoint[] {
 export function filterIntradaySession(points: IntradayPoint[], session: "kr" | "us", now = Date.now()): IntradayPoint[] {
   if (!points.length) return [];
   const { tz, open, close } = SESSION_BOUNDS[session];
-  const tradeDate = dateKeyInTimeZone(points[points.length - 1]!.t, tz);
+  const today = dateKeyInTimeZone(now, tz);
+  const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
+
+  let tradeDate = dateKeyInTimeZone(points[points.length - 1]!.t, tz);
+  if (openNow) {
+    const todayBars = points.filter((p) => {
+      if (dateKeyInTimeZone(p.t, tz) !== today) return false;
+      const m = minutesInTimeZone(p.t, tz);
+      return m >= open && m <= close && p.t <= now;
+    });
+    if (todayBars.length >= 3) tradeDate = today;
+  }
+
   let day = points.filter((p) => dateKeyInTimeZone(p.t, tz) === tradeDate);
   day = day.filter((p) => {
     const m = minutesInTimeZone(p.t, tz);
@@ -735,8 +746,6 @@ export function filterIntradaySession(points: IntradayPoint[], session: "kr" | "
   });
   if (!day.length) return [];
 
-  const today = dateKeyInTimeZone(now, tz);
-  const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
   if (openNow && tradeDate === today) {
     day = day.filter((p) => p.t <= now);
   }
@@ -748,16 +757,16 @@ function padSessionSeries(points: IntradayPoint[], session: "kr" | "us", now = D
   const { tz, open, close } = SESSION_BOUNDS[session];
   const tradeDate = dateKeyInTimeZone(points[points.length - 1]!.t, tz);
   const openTs = tsAtSessionMinute(tradeDate, open, tz);
+  const closeTs = tsAtSessionMinute(tradeDate, close, tz);
   const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
   const today = dateKeyInTimeZone(now, tz);
-  const endTs = openNow && tradeDate === today ? now : tsAtSessionMinute(tradeDate, close, tz);
   let out = [...points];
   if (out[0]!.t > openTs + 60_000) {
     out.unshift({ t: openTs, v: out[0]!.v });
   }
   const last = out[out.length - 1]!;
-  if (last.t < endTs - 30_000) {
-    out.push({ t: endTs, v: last.v });
+  if ((!openNow || tradeDate !== today) && last.t < closeTs - 30_000) {
+    out.push({ t: closeTs, v: last.v });
   }
   return out;
 }

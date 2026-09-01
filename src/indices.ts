@@ -76,15 +76,44 @@ function sparkQuality(row: IndexQuote): number {
   return row.spark.length + (uniq > 1 ? 20 : 0);
 }
 
+function sparkLastDate(row: Pick<IndexQuote, "sparkAt">, session: "kr" | "us"): string {
+  const last = row.sparkAt?.at(-1);
+  if (!last) return "";
+  return dateKeyInTimeZone(last, SESSION_BOUNDS[session].tz);
+}
+
+function sessionToday(session: "kr" | "us", now = Date.now()): string {
+  return dateKeyInTimeZone(now, SESSION_BOUNDS[session].tz);
+}
+
+export function isStaleSessionSpark(row: Pick<IndexQuote, "sparkAt">, session: "kr" | "us", now = Date.now()): boolean {
+  const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
+  if (!openNow) return false;
+  const lastDate = sparkLastDate(row, session);
+  return Boolean(lastDate && lastDate < sessionToday(session, now));
+}
+
 export function mergeIndexQuote(prev: IndexQuote | undefined, incoming: IndexQuote): IndexQuote {
   if (!prev) return incoming;
+  const session = indexSession(incoming.id);
+  const prevDate = sparkLastDate(prev, session);
+  const incDate = sparkLastDate(incoming, session);
   const prevQ = sparkQuality(prev);
   const incQ = sparkQuality(incoming);
   const prevTs = prev.quoteTs ?? prev.sparkAt?.at(-1) ?? 0;
   const incTs = incoming.quoteTs ?? incoming.sparkAt?.at(-1) ?? 0;
   const useIncomingQuote = incTs >= prevTs;
+  const prevSparkStale = isStaleSessionSpark(prev, session);
+
+  if (incDate && prevDate && incDate > prevDate) {
+    return useIncomingQuote ? incoming : { ...incoming, price: prev.price, changePct: prev.changePct, quoteTs: prev.quoteTs };
+  }
+  if (prevSparkStale && incQ <= 0) {
+    return useIncomingQuote ? incoming : { ...incoming, price: prev.price, changePct: prev.changePct, quoteTs: prev.quoteTs };
+  }
+
   let row: IndexQuote;
-  if (incQ <= 0 && prevQ > 0) {
+  if (incQ <= 0 && prevQ > 0 && !prevSparkStale) {
     row = {
       ...incoming,
       spark: prev.spark,
@@ -110,9 +139,8 @@ export function mergeIndexQuote(prev: IndexQuote | undefined, incoming: IndexQuo
 function synthesizeSparkTimes(values: number[], session: "kr" | "us", now = Date.now()): number[] {
   const { tz: sessionTz, open, close } = SESSION_BOUNDS[session];
   const today = dateKeyInTimeZone(now, sessionTz);
-  const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
   const start = tsAtSessionMinute(today, open, sessionTz);
-  const end = openNow ? now : tsAtSessionMinute(today, close, sessionTz);
+  const end = tsAtSessionMinute(today, close, sessionTz);
   if (values.length <= 1) return [start, end];
   return values.map((_, i) => start + ((end - start) * i) / (values.length - 1));
 }
@@ -151,11 +179,8 @@ export function buildSparkChart(
   const { tz: sessionTz, open, close } = SESSION_BOUNDS[session];
   const tradeDate = dateKeyInTimeZone(seriesTimes[seriesTimes.length - 1]!, sessionTz);
   const sessionStart = tsAtSessionMinute(tradeDate, open, sessionTz);
-  const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
-  const today = dateKeyInTimeZone(now, sessionTz);
-  const sessionEnd = openNow && tradeDate === today
-    ? Math.max(now, seriesTimes[seriesTimes.length - 1]!)
-    : tsAtSessionMinute(tradeDate, close, sessionTz);
+  const closeTs = tsAtSessionMinute(tradeDate, close, sessionTz);
+  const sessionEnd = closeTs;
   const timeSpan = sessionEnd - sessionStart || 1;
 
   const min = Math.min(...nums);
@@ -177,7 +202,7 @@ export function buildSparkChart(
     height,
     labels: {
       start: formatSparkTime(sessionStart, DISPLAY_TZ),
-      end: formatSparkTime(sessionEnd, DISPLAY_TZ),
+      end: formatSparkTime(closeTs, DISPLAY_TZ),
     },
     min,
     max,
