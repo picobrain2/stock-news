@@ -4,7 +4,7 @@ import { detailFromQuote, mergeStockDetail } from "./naverStock";
 import { INDEX_REFRESH_MS } from "./feeds";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
-import { buildSparkChart, indexSession, isStaleSessionSpark } from "./indices";
+import { buildSparkChart, indexSession, isStaleSessionSpark, sanitizeIndexRows } from "./indices";
 import { formatDay, formatIndexPrice, formatPct, formatPrice, formatRange, fromNow, isFresh, marketStatus } from "./time";
 import { cleanSnippet, needsKorean } from "./text";
 import { translateNewsItem } from "./translate";
@@ -36,7 +36,7 @@ let reviewRange: ReviewRange = "week";
 let reviewBundle: ReviewBundle = bundledReview();
 let loadingReview = !reviewBundle.week;
 let searchTimer = 0;
-let indices: IndexQuote[] = boot.indices?.length ? boot.indices : bundledIndices();
+let indices: IndexQuote[] = sanitizeIndexRows(boot.indices?.length ? boot.indices : bundledIndices());
 let loadingIndices = indices.length === 0;
 type MobilePane = "news" | "watch";
 let mobilePane: MobilePane = "news";
@@ -584,6 +584,7 @@ async function refreshIndicesInner(live = false): Promise<void> {
     }
     indices = await fetchIndices(indices, live);
     rememberIndexSpark(indices);
+    indices = sanitizeIndexRows(indices);
   } catch {
     /* indices are optional */
   } finally {
@@ -801,7 +802,10 @@ function stockDetailPanel(): string {
 function indexCard(row: IndexQuote): string {
   const session = indexSession(row.id);
   let cardRow = indexRowForCard(row);
-  const cacheKey = `${cardRow.price}|${cardRow.changePct}|${cardRow.quoteTs ?? 0}|${cardRow.spark.length}|${cardRow.sparkAt?.at(-1) ?? 0}`;
+  if (isStaleSessionSpark(cardRow, session)) {
+    cardRow = { ...row, spark: [], sparkAt: undefined };
+  }
+  const cacheKey = `v3|${cardRow.price}|${cardRow.changePct}|${cardRow.quoteTs ?? 0}|${cardRow.spark.length}|${cardRow.sparkAt?.at(-1) ?? 0}`;
   const cached = indexCardCache.get(row.id);
   if (cached?.key === cacheKey) return cached.html;
 

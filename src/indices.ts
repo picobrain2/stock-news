@@ -1,5 +1,5 @@
 import type { IndexQuote } from "./types";
-import { formatSparkTime, isKrMarketOpen, isUsMarketOpen, tsAtSessionMinute, dateKeyInTimeZone } from "./time";
+import { formatSparkTime, isKrMarketOpen, isUsMarketOpen, minutesInTimeZone, tsAtSessionMinute, dateKeyInTimeZone } from "./time";
 
 export type NaverIndex =
   | { kind: "kr"; code: string }
@@ -86,6 +86,52 @@ function sessionToday(session: "kr" | "us", now = Date.now()): string {
   return dateKeyInTimeZone(now, SESSION_BOUNDS[session].tz);
 }
 
+function isWeekdayInTz(ts: number, tz: string): boolean {
+  const wd = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(new Date(ts));
+  return wd !== "Sat" && wd !== "Sun";
+}
+
+function previousTradingDay(now: number, tz: string): string {
+  let t = now - 86_400_000;
+  for (let i = 0; i < 8; i++) {
+    if (isWeekdayInTz(t, tz)) return dateKeyInTimeZone(t, tz);
+    t -= 86_400_000;
+  }
+  return dateKeyInTimeZone(now, tz);
+}
+
+export function resolveSessionAxis(session: "kr" | "us", now = Date.now()): {
+  tradeDate: string;
+  start: number;
+  close: number;
+  labelStart: string;
+  labelClose: string;
+} {
+  const { tz, open, close } = SESSION_BOUNDS[session];
+  const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
+  const today = dateKeyInTimeZone(now, tz);
+  const minNow = minutesInTimeZone(now, tz);
+  let tradeDate = today;
+  if (!openNow && minNow < open) tradeDate = previousTradingDay(now, tz);
+  const start = tsAtSessionMinute(tradeDate, open, tz);
+  const closeTs = tsAtSessionMinute(tradeDate, close, tz);
+  return {
+    tradeDate,
+    start,
+    close: closeTs,
+    labelStart: formatSparkTime(start, DISPLAY_TZ),
+    labelClose: formatSparkTime(closeTs, DISPLAY_TZ),
+  };
+}
+
+export function sanitizeIndexRows(rows: IndexQuote[], now = Date.now()): IndexQuote[] {
+  return rows.map((row) => {
+    const session = indexSession(row.id);
+    if (!isStaleSessionSpark(row, session, now)) return row;
+    return { ...row, spark: [], sparkAt: undefined };
+  });
+}
+
 export function isStaleSessionSpark(row: Pick<IndexQuote, "sparkAt">, session: "kr" | "us", now = Date.now()): boolean {
   const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
   if (!openNow) return false;
@@ -96,6 +142,7 @@ export function isStaleSessionSpark(row: Pick<IndexQuote, "sparkAt">, session: "
 export function mergeIndexQuote(prev: IndexQuote | undefined, incoming: IndexQuote): IndexQuote {
   if (!prev) return incoming;
   const session = indexSession(incoming.id);
+  if (isStaleSessionSpark(prev, session)) prev = { ...prev, spark: [], sparkAt: undefined };
   const prevDate = sparkLastDate(prev, session);
   const incDate = sparkLastDate(incoming, session);
   const prevQ = sparkQuality(prev);
@@ -136,15 +183,6 @@ export function mergeIndexQuote(prev: IndexQuote | undefined, incoming: IndexQuo
   return row;
 }
 
-function synthesizeSparkTimes(values: number[], session: "kr" | "us", now = Date.now()): number[] {
-  const { tz: sessionTz, open, close } = SESSION_BOUNDS[session];
-  const today = dateKeyInTimeZone(now, sessionTz);
-  const start = tsAtSessionMinute(today, open, sessionTz);
-  const end = tsAtSessionMinute(today, close, sessionTz);
-  if (values.length <= 1) return [start, end];
-  return values.map((_, i) => start + ((end - start) * i) / (values.length - 1));
-}
-
 export interface SparkChart {
   line: string;
   area: string;
@@ -166,22 +204,30 @@ export function buildSparkChart(
   now = Date.now(),
 ): SparkChart | null {
   if (values.length < 2) return null;
-  let stampTimes = times?.length === values.length ? times : undefined;
-  if (!stampTimes) {
-    if (values.length < 3) return null;
-    stampTimes = synthesizeSparkTimes(values, session, now);
+  const axis = resolveSessionAxis(session, now);
+  const { tz } = SESSION_BOUNDS[session];
+  const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
+  const plotEnd = openNow && axis.tradeDate === dateKeyInTimeZone(now, tz) ? now : axis.close;
+  const timeSpan = axis.close - axis.start || 1;
+
+  let pairs: { v: number; t: number }[] = [];
+  if (times?.length === values.length) {
+    pairs = values
+      .map((v, i) => ({ v, t: times[i]! }))
+      .filter((p) => p.t >= axis.start - 60_000
+        && p.t <= plotEnd + 60_000
+        && dateKeyInTimeZone(p.t, tz) === axis.tradeDate);
   }
-  const sampled = downsampleSeries(values, stampTimes, 40);
+  if (pairs.length < 2) return null;
+
+  const sampled = downsampleSeries(
+    pairs.map((p) => p.v),
+    pairs.map((p) => p.t),
+    40,
+  );
   const nums = sampled.values;
   const seriesTimes = sampled.times;
   if (!seriesTimes?.length || nums.length < 2) return null;
-
-  const { tz: sessionTz, open, close } = SESSION_BOUNDS[session];
-  const tradeDate = dateKeyInTimeZone(seriesTimes[seriesTimes.length - 1]!, sessionTz);
-  const sessionStart = tsAtSessionMinute(tradeDate, open, sessionTz);
-  const closeTs = tsAtSessionMinute(tradeDate, close, sessionTz);
-  const sessionEnd = closeTs;
-  const timeSpan = sessionEnd - sessionStart || 1;
 
   const min = Math.min(...nums);
   const max = Math.max(...nums);
@@ -189,7 +235,7 @@ export function buildSparkChart(
   const padY = 5;
   const innerH = height - padY * 2;
   const points = nums.map((v, i) => ({
-    x: Math.max(0, Math.min(width, ((seriesTimes[i]! - sessionStart) / timeSpan) * width)),
+    x: Math.max(0, Math.min(width, ((seriesTimes[i]! - axis.start) / timeSpan) * width)),
     y: padY + innerH - ((v - min) / span) * innerH,
   }));
   const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
@@ -201,8 +247,8 @@ export function buildSparkChart(
     width,
     height,
     labels: {
-      start: formatSparkTime(sessionStart, DISPLAY_TZ),
-      end: formatSparkTime(closeTs, DISPLAY_TZ),
+      start: axis.labelStart,
+      end: axis.labelClose,
     },
     min,
     max,

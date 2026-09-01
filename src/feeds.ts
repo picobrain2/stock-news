@@ -1,6 +1,6 @@
 import { isGoogleNewsBoilerplate, isGoogleNewsUrl, resolveGoogleNewsUrl } from "./googleNews";
 import { classifyTone, inferRegion, isMarketRelevant, isOffTopicNews, scoreImpact } from "./impact";
-import { INDEX_SPECS, indexSession, SESSION_BOUNDS, DISPLAY_TZ, mergeIndexQuote, type IndexSpec } from "./indices";
+import { INDEX_SPECS, indexSession, resolveSessionAxis, SESSION_BOUNDS, DISPLAY_TZ, mergeIndexQuote, type IndexSpec } from "./indices";
 import { extractArticleText, extractPublishedAt, stripHtml, summarizeText } from "./text";
 import { dateKeyInTimeZone, isKrMarketOpen, isUsMarketOpen, minutesInTimeZone, parseNewsDate, pickPublishedAt, rangeWindow, tsAtSessionMinute } from "./time";
 import type { IndexQuote, NewsItem, Quote, SearchHit, SourcePull, ReviewRange } from "./types";
@@ -97,6 +97,23 @@ async function fetchVia(target: string, timeoutMs: number): Promise<string> {
   }
 }
 
+async function fetchDirect(url: string, timeoutMs: number): Promise<string> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { Accept: "application/json, application/xml, */*", "User-Agent": UA },
+    });
+    if (!res.ok) throw new Error(String(res.status));
+    const text = await res.text();
+    if (!text.trim()) throw new Error("empty");
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function fetchText(url: string, timeoutMs = 5000): Promise<string> {
   if (!isBrowser) {
     const ctrl = new AbortController();
@@ -111,6 +128,14 @@ export async function fetchText(url: string, timeoutMs = 5000): Promise<string> 
     } finally {
       clearTimeout(timer);
     }
+  }
+  try {
+    const host = new URL(url).hostname;
+    if (host === "api.stock.naver.com" || host === "m.stock.naver.com") {
+      return await fetchDirect(url, Math.min(timeoutMs, 4500));
+    }
+  } catch {
+    /* fall through to proxy */
   }
   const proxies = proxyUrls(url);
   const fastMs = Math.min(timeoutMs, 3500);
@@ -637,8 +662,13 @@ export async function getQuotes(symbols: string[]): Promise<Quote[]> {
 }
 
 export async function getIndexBoard(): Promise<IndexQuote[]> {
-  const rows = await mapLimit(INDEX_SPECS, 3, (spec) => fetchIndex(spec));
-  return rows.filter((row): row is IndexQuote => Boolean(row));
+  const rows: IndexQuote[] = [];
+  for (const spec of INDEX_SPECS) {
+    const row = await fetchIndex(spec);
+    if (row) rows.push(row);
+    if (isBrowser) await sleep(300);
+  }
+  return rows;
 }
 
 function intradayFromYahooRaw(raw: string, spec: IndexSpec): IntradayPoint[] {
@@ -715,8 +745,9 @@ function parseNaverWorldIntraday(raw: string): IntradayPoint[] {
     if (rawDt.length < 14) continue;
     const v = num(row.currentPrice);
     if (!Number.isFinite(v)) continue;
-    const iso = `${rawDt.slice(0, 4)}-${rawDt.slice(4, 6)}-${rawDt.slice(6, 8)}T${rawDt.slice(8, 10)}:${rawDt.slice(10, 12)}:${rawDt.slice(12, 14)}`;
-    const t = Date.parse(`${iso}-05:00`);
+    const minute = Number(rawDt.slice(8, 10)) * 60 + Number(rawDt.slice(10, 12));
+    const dateKey = `${rawDt.slice(0, 4)}-${rawDt.slice(4, 6)}-${rawDt.slice(6, 8)}`;
+    const t = tsAtSessionMinute(dateKey, minute, "America/New_York");
     if (!Number.isFinite(t)) continue;
     out.push({ t, v });
   }
@@ -726,47 +757,24 @@ function parseNaverWorldIntraday(raw: string): IntradayPoint[] {
 export function filterIntradaySession(points: IntradayPoint[], session: "kr" | "us", now = Date.now()): IntradayPoint[] {
   if (!points.length) return [];
   const { tz, open, close } = SESSION_BOUNDS[session];
-  const today = dateKeyInTimeZone(now, tz);
+  const axis = resolveSessionAxis(session, now);
   const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
+  const plotEnd = openNow && axis.tradeDate === dateKeyInTimeZone(now, tz) ? now : axis.close;
 
-  let tradeDate = dateKeyInTimeZone(points[points.length - 1]!.t, tz);
-  if (openNow) {
-    const todayBars = points.filter((p) => {
-      if (dateKeyInTimeZone(p.t, tz) !== today) return false;
-      const m = minutesInTimeZone(p.t, tz);
-      return m >= open && m <= close && p.t <= now;
-    });
-    if (todayBars.length >= 3) tradeDate = today;
-  }
-
-  let day = points.filter((p) => dateKeyInTimeZone(p.t, tz) === tradeDate);
+  let day = points.filter((p) => dateKeyInTimeZone(p.t, tz) === axis.tradeDate);
   day = day.filter((p) => {
     const m = minutesInTimeZone(p.t, tz);
-    return m >= open && m <= close;
+    return m >= open && m <= close && p.t >= axis.start - 60_000 && p.t <= plotEnd + 60_000;
   });
-  if (!day.length) return [];
-
-  if (openNow && tradeDate === today) {
-    day = day.filter((p) => p.t <= now);
-  }
   return day.length >= 3 ? day : [];
 }
 
 function padSessionSeries(points: IntradayPoint[], session: "kr" | "us", now = Date.now()): IntradayPoint[] {
   if (points.length < 3) return points;
-  const { tz, open, close } = SESSION_BOUNDS[session];
-  const tradeDate = dateKeyInTimeZone(points[points.length - 1]!.t, tz);
-  const openTs = tsAtSessionMinute(tradeDate, open, tz);
-  const closeTs = tsAtSessionMinute(tradeDate, close, tz);
-  const openNow = session === "kr" ? isKrMarketOpen(new Date(now)) : isUsMarketOpen(new Date(now));
-  const today = dateKeyInTimeZone(now, tz);
+  const axis = resolveSessionAxis(session, now);
   let out = [...points];
-  if (out[0]!.t > openTs + 60_000) {
-    out.unshift({ t: openTs, v: out[0]!.v });
-  }
-  const last = out[out.length - 1]!;
-  if ((!openNow || tradeDate !== today) && last.t < closeTs - 30_000) {
-    out.push({ t: closeTs, v: last.v });
+  if (out[0]!.t > axis.start + 60_000) {
+    out.unshift({ t: axis.start, v: out[0]!.v });
   }
   return out;
 }
