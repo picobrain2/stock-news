@@ -49,6 +49,10 @@ const stickyDetails = new Map<string, StockDetail>();
 let quotesRefresh: Promise<void> | null = null;
 let batchingRefresh = 0;
 let paintRaf = 0;
+let indicesPoll: Promise<void> | null = null;
+let boardSignature = "";
+const indexCardCache = new Map<string, { key: string; html: string }>();
+const FEED_RENDER_CAP = 80;
 
 function indexRowForCard(row: IndexQuote): IndexQuote {
   const sticky = stickyIndexSpark.get(row.id);
@@ -160,7 +164,9 @@ function splitFeed(items: NewsItem[]): { spotlight: NewsItem[]; rest: NewsItem[]
   const now = Date.now();
   const spotlight = items.filter((n) => n.impact >= 24 && now - n.publishedAt < 12 * 3_600_000);
   const ids = new Set(spotlight.map((n) => n.id));
-  return { spotlight, rest: items.filter((n) => !ids.has(n.id)) };
+  const rest = items.filter((n) => !ids.has(n.id));
+  const room = Math.max(0, FEED_RENDER_CAP - spotlight.length);
+  return { spotlight, rest: rest.slice(0, room) };
 }
 
 function addStock(hit: SearchHit | Stock): void {
@@ -218,8 +224,8 @@ async function refreshAll(): Promise<void> {
     await Promise.all([
       refreshMarket(),
       refreshMine(),
-      refreshQuotes(),
-      refreshIndices(),
+      refreshQuotes({ live: false }),
+      refreshIndices({ live: false }),
       refreshReview(),
     ]);
     lastFetch = bundleFetchedAt || Date.now();
@@ -229,6 +235,15 @@ async function refreshAll(): Promise<void> {
     batchingRefresh -= 1;
     paintImmediate();
   }
+  void refreshLiveTail();
+}
+
+async function refreshLiveTail(): Promise<void> {
+  await Promise.all([
+    refreshQuotes({ live: true }),
+    refreshIndices({ live: true }),
+  ]);
+  if (hasShell()) updateIndexBoard();
 }
 
 async function refreshReview(): Promise<void> {
@@ -341,18 +356,19 @@ async function refreshMine(): Promise<void> {
   }
 }
 
-async function refreshQuotes(): Promise<void> {
+async function refreshQuotes(opts?: { live?: boolean }): Promise<void> {
   if (quotesRefresh) return quotesRefresh;
-  quotesRefresh = refreshQuotesInner().finally(() => {
+  quotesRefresh = refreshQuotesInner(Boolean(opts?.live)).finally(() => {
     quotesRefresh = null;
   });
   return quotesRefresh;
 }
 
-async function refreshQuotesInner(): Promise<void> {
+async function refreshQuotesInner(live = true): Promise<void> {
   try {
     const snap = () => [...quotes.values(), ...stickyQuotes.values()];
     rememberQuotes(await fetchQuotes(watchlist, snap(), false));
+    if (!live) return;
     paint();
     if (watchlist.every((s) => quoteFor(s))) return;
     rememberQuotes(await fetchQuotes(watchlist, snap(), true));
@@ -368,26 +384,35 @@ function shouldPollIndices(): boolean {
 
 function rememberIndexSpark(rows: IndexQuote[]): void {
   for (const row of rows) {
-    const session = indexSession(row.id);
-    const chart = buildSparkChart(row.spark, 180, 58, row.sparkAt, session);
-    if (chart && row.spark.length >= 2) {
-      stickyIndexSpark.set(row.id, {
-        spark: row.spark,
-        sparkAt: row.sparkAt,
-        sparkTz: row.sparkTz,
-      });
-    }
+    if (row.spark.length < 2) continue;
+    stickyIndexSpark.set(row.id, {
+      spark: row.spark,
+      sparkAt: row.sparkAt,
+      sparkTz: row.sparkTz,
+    });
   }
 }
 
-async function refreshIndices(): Promise<void> {
+function indicesSignature(rows: IndexQuote[]): string {
+  return rows.map((row) => `${row.id}:${row.price}:${row.changePct}:${row.spark.length}:${row.sparkAt?.at(-1) ?? 0}`).join("|");
+}
+
+async function refreshIndices(opts?: { live?: boolean }): Promise<void> {
+  if (indicesPoll) return indicesPoll;
+  indicesPoll = refreshIndicesInner(Boolean(opts?.live)).finally(() => {
+    indicesPoll = null;
+  });
+  return indicesPoll;
+}
+
+async function refreshIndicesInner(live = false): Promise<void> {
   try {
     if (!indices.length) {
       indices = await fetchIndices([], false);
       rememberIndexSpark(indices);
       paint();
     }
-    indices = await fetchIndices(indices, true);
+    indices = await fetchIndices(indices, live);
     rememberIndexSpark(indices);
   } catch {
     /* indices are optional */
@@ -604,10 +629,12 @@ function stockDetailPanel(): string {
 }
 
 function indexCard(row: IndexQuote): string {
-  const tone = row.changePct > 0 ? "up" : row.changePct < 0 ? "down" : "flat";
-  const color = tone === "up" ? "var(--up)" : tone === "down" ? "var(--down)" : "var(--muted)";
   const session = indexSession(row.id);
   let cardRow = indexRowForCard(row);
+  const cacheKey = `${cardRow.price}|${cardRow.changePct}|${cardRow.spark.length}|${cardRow.sparkAt?.at(-1) ?? 0}`;
+  const cached = indexCardCache.get(row.id);
+  if (cached?.key === cacheKey) return cached.html;
+
   let chart = buildSparkChart(cardRow.spark, 180, 58, cardRow.sparkAt, session);
   if (!chart) {
     const sticky = stickyIndexSpark.get(row.id);
@@ -623,6 +650,8 @@ function indexCard(row: IndexQuote): string {
       sparkTz: cardRow.sparkTz,
     });
   }
+  const tone = row.changePct > 0 ? "up" : row.changePct < 0 ? "down" : "flat";
+  const color = tone === "up" ? "var(--up)" : tone === "down" ? "var(--down)" : "var(--muted)";
   const gradId = `spark-${row.id}`;
   const chartBlock = chart ? `
     <div class="index-chart">
@@ -647,7 +676,7 @@ function indexCard(row: IndexQuote): string {
       </div>
     </div>
   ` : `<div class="spark-gap spark-pending"><span class="muted">차트 불러오는 중</span></div>`;
-  return `
+  const html = `
     <article class="index tone-${tone}">
       <div class="index-top">
         <div class="index-name">${esc(row.name)}</div>
@@ -657,6 +686,8 @@ function indexCard(row: IndexQuote): string {
       ${chartBlock}
     </article>
   `;
+  indexCardCache.set(row.id, { key: cacheKey, html });
+  return html;
 }
 
 function indexBoard(): string {
@@ -694,6 +725,9 @@ function updateStatusPills(): void {
 
 function updateIndexBoard(): void {
   if (tab !== "market" && tab !== "mine") return;
+  const sig = indicesSignature(indices);
+  if (sig === boardSignature && app.querySelector(".board-wrap")) return;
+  boardSignature = sig;
   const html = indexBoard();
   const existing = app.querySelector(".board-wrap");
   if (!html) {
@@ -982,10 +1016,10 @@ export function render(): void {
     void refreshAll();
   }, 180_000);
   window.setInterval(() => {
-    if (shouldPollIndices()) void refreshIndices();
+    if (shouldPollIndices()) void refreshIndices({ live: true });
   }, INDEX_REFRESH_MS);
   document.addEventListener("visibilitychange", () => {
-    if (shouldPollIndices()) void refreshIndices();
+    if (shouldPollIndices()) void refreshIndices({ live: true });
   });
   window.setInterval(updateStatusPills, 30_000);
 

@@ -145,17 +145,26 @@ export function formatSparkTime(ts: number, timeZone: string): string {
 }
 
 export function tsAtSessionMinute(dateKey: string, minuteOfDay: number, timeZone: string): number {
+  const cacheKey = `${dateKey}|${minuteOfDay}|${timeZone}`;
+  const hit = sessionMinuteCache.get(cacheKey);
+  if (hit != null) return hit;
+
   const [y, mo, d] = dateKey.split("-").map(Number);
   let t = Date.UTC(y, mo - 1, d, 0, 0, 0) - 14 * 3_600_000;
   const end = t + 48 * 3_600_000;
   while (t < end) {
     if (dateKeyInTimeZone(t, timeZone) === dateKey && minutesInTimeZone(t, timeZone) === minuteOfDay) {
+      sessionMinuteCache.set(cacheKey, t);
       return t;
     }
     t += 60_000;
   }
-  return Date.UTC(y, mo - 1, d, Math.floor(minuteOfDay / 60), minuteOfDay % 60);
+  const fallback = Date.UTC(y, mo - 1, d, Math.floor(minuteOfDay / 60), minuteOfDay % 60);
+  sessionMinuteCache.set(cacheKey, fallback);
+  return fallback;
 }
+
+const sessionMinuteCache = new Map<string, number>();
 
 export function marketStatus(now = new Date()): { kr: string; us: string } {
   const krOpen = isOpen(now, 9, 0, 15, 30, 9);

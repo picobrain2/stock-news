@@ -12,8 +12,8 @@ const UA =
 
 const cache = new Map<string, { at: number; data: unknown }>();
 const CACHE_MS = 90_000;
-export const INDEX_REFRESH_MS = 15_000;
-const INDEX_CACHE_MS = 12_000;
+export const INDEX_REFRESH_MS = 45_000;
+const INDEX_CACHE_MS = 25_000;
 
 function optionalNum(raw: unknown): number | undefined {
   if (raw == null || raw === "") return undefined;
@@ -637,8 +637,15 @@ export async function getQuotes(symbols: string[]): Promise<Quote[]> {
 }
 
 export async function getIndexBoard(): Promise<IndexQuote[]> {
-  const rows = await Promise.all(INDEX_SPECS.map((spec) => fetchIndex(spec)));
+  const rows = await mapLimit(INDEX_SPECS, 3, (spec) => fetchIndex(spec));
   return rows.filter((row): row is IndexQuote => Boolean(row));
+}
+
+function intradayFromYahooRaw(raw: string, spec: IndexSpec): IntradayPoint[] {
+  const session = indexSession(spec.id);
+  const filtered = filterIntradaySession(yahooIntraday(raw), session);
+  if (filtered.length < 3) return [];
+  return downsampleIntraday(padSessionSeries(filtered, session), 56);
 }
 
 function yahooChartUrl(symbol: string, interval: string, range: string): string {
@@ -756,12 +763,16 @@ function downsampleIntraday(points: IntradayPoint[], max = 56): IntradayPoint[] 
   return out;
 }
 
-async function fetchIntradaySeries(spec: IndexSpec, alt?: IntradayPoint[]): Promise<IntradayPoint[]> {
+async function fetchIntradaySeries(spec: IndexSpec, alt?: IntradayPoint[], yahooRaw?: string): Promise<IntradayPoint[]> {
+  if (yahooRaw) {
+    const fromYahoo = intradayFromYahooRaw(yahooRaw, spec);
+    if (fromYahoo.length >= 3) return fromYahoo;
+  }
   const session = indexSession(spec.id);
   try {
     const raw = await fetchText(yahooChartUrl(spec.symbol, "5m", "1d"), 8000);
-    const filtered = filterIntradaySession(yahooIntraday(raw), session);
-    if (filtered.length >= 3) return downsampleIntraday(padSessionSeries(filtered, session), 56);
+    const fromYahoo = intradayFromYahooRaw(raw, spec);
+    if (fromYahoo.length >= 3) return fromYahoo;
   } catch {
     /* fall through */
   }
@@ -1005,19 +1016,20 @@ function parseNaverDigits(html: string): number | null {
 }
 
 async function fetchYahooIndex(spec: IndexSpec): Promise<IndexQuote | null> {
-  let parsed: ReturnType<typeof yahooCloses> = null;
+  let raw = "";
   try {
-    parsed = yahooCloses(await fetchText(yahooChartUrl(spec.symbol, "5m", "1d"), 8000));
+    raw = await fetchText(yahooChartUrl(spec.symbol, "5m", "1d"), 8000);
   } catch {
-    parsed = null;
+    return null;
   }
+  const parsed = yahooCloses(raw);
   if (!parsed) return null;
   const { meta } = parsed;
   const price = meta.regularMarketPrice ?? parsed.closes.at(-1);
   if (price == null) return null;
   const prev = meta.previousClose ?? meta.chartPreviousClose ?? parsed.closes[0];
   const changePct = meta.regularMarketChangePercent ?? (prev ? ((price - prev) / prev) * 100 : 0);
-  const series = await fetchIntradaySeries(spec);
+  const series = await fetchIntradaySeries(spec, undefined, raw);
   return packIndex(spec, price, changePct, meta.currency ?? "", series);
 }
 
