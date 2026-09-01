@@ -649,7 +649,15 @@ function intradayFromYahooRaw(raw: string, spec: IndexSpec): IntradayPoint[] {
 }
 
 function yahooChartUrl(symbol: string, interval: string, range: string): string {
-  return `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}`;
+  const base = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}`;
+  return isBrowser ? `${base}&_=${Date.now()}` : base;
+}
+
+function preferYahooIndex(spec: IndexSpec): boolean {
+  if (!isBrowser) return false;
+  if (spec.naver?.kind === "world") return true;
+  if (indexSession(spec.id) === "us" && isUsMarketOpen()) return true;
+  return false;
 }
 
 function isKrSymbol(symbol: string): boolean {
@@ -659,6 +667,7 @@ function isKrSymbol(symbol: string): boolean {
 type YahooMeta = {
   regularMarketPrice?: number;
   regularMarketChangePercent?: number;
+  regularMarketTime?: number;
   chartPreviousClose?: number;
   previousClose?: number;
   currency?: string;
@@ -901,17 +910,35 @@ async function fetchIndex(spec: IndexSpec): Promise<IndexQuote | null> {
   if (hit && Date.now() - hit.at < INDEX_CACHE_MS) return (hit.data as IndexQuote | null) ?? null;
   const prev = (hit?.data as IndexQuote | null) ?? null;
   let row: IndexQuote | null = null;
-  if (spec.naver) {
+  const yahooFirst = preferYahooIndex(spec) || !spec.naver;
+  if (yahooFirst) {
+    try {
+      row = await fetchYahooIndex(spec);
+    } catch {
+      row = null;
+    }
+  }
+  if (!row && spec.naver) {
     try {
       row = await fetchNaverIndex(spec);
     } catch {
       row = null;
     }
   }
-  if (!row) row = await fetchYahooIndex(spec);
+  if (!row && !yahooFirst) {
+    try {
+      row = await fetchYahooIndex(spec);
+    } catch {
+      row = null;
+    }
+  }
   if (row && prev) row = mergeIndexQuote(prev, row);
-  cache.set(`index:${spec.symbol}`, { at: Date.now(), data: row });
-  return row;
+  if (row || !goodIndex(prev)) cache.set(`index:${spec.symbol}`, { at: Date.now(), data: row });
+  return row ?? (goodIndex(prev) ? prev : null);
+}
+
+function goodIndex(row: IndexQuote | null | undefined): row is IndexQuote {
+  return Boolean(row && Number.isFinite(row.price) && row.price > 0);
 }
 
 function num(raw: unknown): number {
@@ -919,7 +946,14 @@ function num(raw: unknown): number {
   return Number.isFinite(n) ? n : NaN;
 }
 
-function packIndex(spec: IndexSpec, price: number, changePct: number, currency: string, series: IntradayPoint[]): IndexQuote | null {
+function packIndex(
+  spec: IndexSpec,
+  price: number,
+  changePct: number,
+  currency: string,
+  series: IntradayPoint[],
+  quoteTs?: number,
+): IndexQuote | null {
   if (!Number.isFinite(price)) return null;
   const sparkPack = series.length >= 3
     ? {
@@ -935,6 +969,8 @@ function packIndex(spec: IndexSpec, price: number, changePct: number, currency: 
     price,
     changePct: Number.isFinite(changePct) ? changePct : 0,
     currency,
+    priceFormat: spec.priceFormat,
+    quoteTs: quoteTs ?? series.at(-1)?.t,
     ...sparkPack,
   };
 }
@@ -953,16 +989,22 @@ async function fetchNaverIndex(spec: IndexSpec): Promise<IndexQuote | null> {
       fetchText(`https://api.stock.naver.com/index/${src.code}/basic`, 4000),
       fetchText(`https://api.stock.naver.com/chart/foreign/index/${src.code}?periodType=day&count=1`, 5000).catch(() => "{}"),
     ]);
-    const basic = JSON.parse(basicRaw) as { closePrice?: string; fluctuationsRatio?: string };
+    const basic = JSON.parse(basicRaw) as {
+      closePrice?: string;
+      fluctuationsRatio?: string;
+      localTradedAt?: string;
+    };
     const chart = JSON.parse(chartRaw) as { lastClosePrice?: number };
     const naverSeries = parseNaverWorldIntraday(chartRaw);
     const series = await fetchIntradaySeries(spec, naverSeries);
+    const quoteTs = basic.localTradedAt ? Date.parse(basic.localTradedAt) : series.at(-1)?.t;
     return packIndex(
       spec,
       num(basic.closePrice) || num(chart.lastClosePrice),
       num(basic.fluctuationsRatio),
       "USD",
       series,
+      Number.isFinite(quoteTs) ? quoteTs : undefined,
     );
   }
   if (src.kind === "fx") {
@@ -1025,12 +1067,20 @@ async function fetchYahooIndex(spec: IndexSpec): Promise<IndexQuote | null> {
   const parsed = yahooCloses(raw);
   if (!parsed) return null;
   const { meta } = parsed;
-  const price = meta.regularMarketPrice ?? parsed.closes.at(-1);
-  if (price == null) return null;
-  const prev = meta.previousClose ?? meta.chartPreviousClose ?? parsed.closes[0];
-  const changePct = meta.regularMarketChangePercent ?? (prev ? ((price - prev) / prev) * 100 : 0);
   const series = await fetchIntradaySeries(spec, undefined, raw);
-  return packIndex(spec, price, changePct, meta.currency ?? "", series);
+  const session = indexSession(spec.id);
+  const liveSession = session === "us" ? isUsMarketOpen() : isKrMarketOpen();
+  const lastBar = series.at(-1);
+  let price = meta.regularMarketPrice ?? parsed.closes.at(-1);
+  let quoteTs = meta.regularMarketTime ? meta.regularMarketTime * 1000 : undefined;
+  if (liveSession && lastBar) {
+    price = lastBar.v;
+    quoteTs = lastBar.t;
+  }
+  if (price == null) return null;
+  const prev = meta.chartPreviousClose ?? meta.previousClose ?? parsed.closes[0];
+  const changePct = meta.regularMarketChangePercent ?? (prev ? ((price - prev) / prev) * 100 : 0);
+  return packIndex(spec, price, changePct, meta.currency ?? "", series, quoteTs);
 }
 
 export async function searchSymbols(query: string): Promise<SearchHit[]> {

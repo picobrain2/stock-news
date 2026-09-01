@@ -12,6 +12,7 @@ export interface IndexSpec {
   name: string;
   symbol: string;
   naver?: NaverIndex;
+  priceFormat?: "index" | "yield";
 }
 
 export const INDEX_SPECS: IndexSpec[] = [
@@ -19,6 +20,8 @@ export const INDEX_SPECS: IndexSpec[] = [
   { id: "kosdaq", name: "코스닥", symbol: "^KQ11", naver: { kind: "kr", code: "KOSDAQ" } },
   { id: "nasdaq", name: "나스닥", symbol: "^IXIC", naver: { kind: "world", code: ".IXIC" } },
   { id: "spx", name: "S&P 500", symbol: "^GSPC", naver: { kind: "world", code: ".INX" } },
+  { id: "sox", name: "필라델피아 반도체", symbol: "^SOX", naver: { kind: "world", code: ".SOX" } },
+  { id: "us10y", name: "미국채 10년", symbol: "^TNX", priceFormat: "yield" },
   { id: "nq", name: "나스닥 선물", symbol: "NQ=F" },
   { id: "es", name: "S&P 선물", symbol: "ES=F" },
   { id: "wti", name: "WTI 선물", symbol: "CL=F", naver: { kind: "oil", code: "OIL_CL" } },
@@ -77,21 +80,31 @@ export function mergeIndexQuote(prev: IndexQuote | undefined, incoming: IndexQuo
   if (!prev) return incoming;
   const prevQ = sparkQuality(prev);
   const incQ = sparkQuality(incoming);
+  const prevTs = prev.quoteTs ?? prev.sparkAt?.at(-1) ?? 0;
+  const incTs = incoming.quoteTs ?? incoming.sparkAt?.at(-1) ?? 0;
+  const useIncomingQuote = incTs >= prevTs;
+  let row: IndexQuote;
   if (incQ <= 0 && prevQ > 0) {
-    return {
+    row = {
+      ...incoming,
+      spark: prev.spark,
+      sparkAt: prev.sparkAt,
+      sparkTz: prev.sparkTz ?? incoming.sparkTz,
+    };
+  } else if (incQ >= prevQ) {
+    row = incoming;
+  } else {
+    row = {
       ...incoming,
       spark: prev.spark,
       sparkAt: prev.sparkAt,
       sparkTz: prev.sparkTz ?? incoming.sparkTz,
     };
   }
-  if (incQ >= prevQ) return incoming;
-  return {
-    ...incoming,
-    spark: prev.spark,
-    sparkAt: prev.sparkAt,
-    sparkTz: prev.sparkTz ?? incoming.sparkTz,
-  };
+  if (!useIncomingQuote) {
+    row = { ...row, price: prev.price, changePct: prev.changePct, quoteTs: prev.quoteTs };
+  }
+  return row;
 }
 
 function synthesizeSparkTimes(values: number[], session: "kr" | "us", now = Date.now()): number[] {

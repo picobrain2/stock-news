@@ -84,7 +84,8 @@ export function formatPrice(price: number, currency: string): string {
   }).format(price);
 }
 
-export function formatIndexPrice(price: number): string {
+export function formatIndexPrice(price: number, format: "index" | "yield" = "index"): string {
+  if (format === "yield") return `${price.toFixed(2)}%`;
   return new Intl.NumberFormat("ko-KR", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,

@@ -559,7 +559,7 @@ function rememberIndexSpark(rows: IndexQuote[]): void {
 }
 
 function indicesSignature(rows: IndexQuote[]): string {
-  return rows.map((row) => `${row.id}:${row.price}:${row.changePct}:${row.spark.length}:${row.sparkAt?.at(-1) ?? 0}`).join("|");
+  return rows.map((row) => `${row.id}:${row.price}:${row.changePct}:${row.quoteTs ?? 0}:${row.spark.length}:${row.sparkAt?.at(-1) ?? 0}`).join("|");
 }
 
 async function refreshIndices(opts?: { live?: boolean }): Promise<void> {
@@ -796,7 +796,7 @@ function stockDetailPanel(): string {
 function indexCard(row: IndexQuote): string {
   const session = indexSession(row.id);
   let cardRow = indexRowForCard(row);
-  const cacheKey = `${cardRow.price}|${cardRow.changePct}|${cardRow.spark.length}|${cardRow.sparkAt?.at(-1) ?? 0}`;
+  const cacheKey = `${cardRow.price}|${cardRow.changePct}|${cardRow.quoteTs ?? 0}|${cardRow.spark.length}|${cardRow.sparkAt?.at(-1) ?? 0}`;
   const cached = indexCardCache.get(row.id);
   if (cached?.key === cacheKey) return cached.html;
 
@@ -817,6 +817,7 @@ function indexCard(row: IndexQuote): string {
   }
   const tone = row.changePct > 0 ? "up" : row.changePct < 0 ? "down" : "flat";
   const color = tone === "up" ? "var(--up)" : tone === "down" ? "var(--down)" : "var(--muted)";
+  const pxFmt = row.priceFormat ?? "index";
   const gradId = `spark-${row.id}`;
   const chartBlock = chart ? `
     <div class="index-chart">
@@ -836,7 +837,7 @@ function indexCard(row: IndexQuote): string {
       </svg>
       <div class="spark-axis">
         <span class="spark-date">${esc(chart.labels.start)}</span>
-        <span class="spark-range">${esc(formatIndexPrice(chart.min))} – ${esc(formatIndexPrice(chart.max))}</span>
+        <span class="spark-range">${esc(formatIndexPrice(chart.min, pxFmt))} – ${esc(formatIndexPrice(chart.max, pxFmt))}</span>
         <span class="spark-date end">${esc(chart.labels.end)}</span>
       </div>
     </div>
@@ -847,7 +848,7 @@ function indexCard(row: IndexQuote): string {
         <div class="index-name">${esc(row.name)}</div>
         <div class="index-chg ${tone === "flat" ? "muted" : tone}">${esc(formatPct(row.changePct))}</div>
       </div>
-      <div class="index-px">${esc(formatIndexPrice(row.price))}</div>
+      <div class="index-px">${esc(formatIndexPrice(row.price, pxFmt))}</div>
       ${chartBlock}
     </article>
   `;

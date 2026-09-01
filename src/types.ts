@@ -54,6 +54,8 @@ export interface IndexQuote {
   spark: number[];
   sparkAt?: number[];
   sparkTz?: string;
+  quoteTs?: number;
+  priceFormat?: "index" | "yield";
 }
 
 export interface SearchHit {
