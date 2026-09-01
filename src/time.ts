@@ -122,7 +122,8 @@ export function minutesInTimeZone(ts: number, timeZone: string): number {
     minute: "numeric",
     hour12: false,
   }).formatToParts(new Date(ts));
-  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  let hour = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  if (hour === 24) hour = 0;
   const minute = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
   return hour * 60 + minute;
 }
@@ -151,15 +152,18 @@ export function tsAtSessionMinute(dateKey: string, minuteOfDay: number, timeZone
   if (hit != null) return hit;
 
   const [y, mo, d] = dateKey.split("-").map(Number);
-  let guess = Date.UTC(y, mo - 1, d, 12, 0, 0);
-  for (let i = 0; i <= 36; i++) {
-    for (const t of [guess + i * 3_600_000, guess - i * 3_600_000]) {
+  const guess = Date.UTC(y, mo - 1, d, 12, 0, 0);
+  const stepMs = 900_000;
+  const maxSteps = 96;
+  for (let i = 0; i <= maxSteps; i++) {
+    for (const t of [guess + i * stepMs, guess - i * stepMs]) {
       if (dateKeyInTimeZone(t, timeZone) === dateKey && minutesInTimeZone(t, timeZone) === minuteOfDay) {
         sessionMinuteCache.set(cacheKey, t);
         return t;
       }
     }
   }
+  sessionMinuteCache.set(cacheKey, guess);
   return guess;
 }
 
