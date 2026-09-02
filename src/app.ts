@@ -89,12 +89,12 @@ async function refreshStockSpark(stock: Stock, gen: number): Promise<void> {
     const cached = stickyStockSpark.get(stock.id);
     if (cached && stockDetailFor === stock.id && stockDetail) {
       applyStockSpark(stock, cached);
-      paint();
+      paintDetail();
     }
     const pack = await fetchStockSpark(stock);
     if (!pack || gen !== stockDetailGen || filterId !== stock.id) return;
     applyStockSpark(stock, pack);
-    paint();
+    paintDetail();
   } catch {
     /* spark optional */
   }
@@ -604,10 +604,10 @@ async function refreshQuotesInner(live = true): Promise<void> {
     const snap = () => [...quotes.values(), ...stickyQuotes.values()];
     rememberQuotes(await fetchQuotes(watchlist, snap(), false));
     if (!live) return;
-    paint();
+    paintQuotes();
     if (watchlist.every((s) => quoteFor(s))) return;
     rememberQuotes(await fetchQuotes(watchlist, snap(), true));
-    paint();
+    paintQuotes();
   } catch {
     /* quotes are optional */
   }
@@ -684,11 +684,11 @@ async function refreshStockDetail(): Promise<void> {
       if (!fileSeed || gen !== stockDetailGen || filterId !== stock.id) return;
       stockDetail = rememberStockDetail(stock, fileSeed);
       stockDetailFor = stock.id;
-      paint();
+      paintDetail();
     });
   }
   loadingStockDetail = true;
-  paint();
+  paintDetail();
   void refreshStockSpark(stock, gen);
   if (!seeded && !quoteFor(stock)) {
     void fetchQuoteQuick(stock).then((q) => {
@@ -698,7 +698,7 @@ async function refreshStockDetail(): Promise<void> {
         const next = detailFromQuote(stock, q);
         stockDetail = rememberStockDetail(stock, next);
         stockDetailFor = stock.id;
-        paint();
+        paintDetail();
       }
     });
   }
@@ -724,7 +724,7 @@ async function refreshStockDetail(): Promise<void> {
   } finally {
     if (gen !== stockDetailGen) return;
     loadingStockDetail = false;
-    paint();
+    paintDetail();
   }
 }
 
@@ -1010,6 +1010,41 @@ function indexBoardHint(): string {
   const st = marketStatus();
   if (st.kr === "한국 개장" || st.us === "미국 개장") return "당일 장중 · 5분봉";
   return "금일 장 마감 · 5분봉";
+}
+
+function paintQuotes(): void {
+  if (!hasShell()) {
+    paint();
+    return;
+  }
+  const watchlistEl = app.querySelector<HTMLElement>(".watchlist");
+  if (watchlistEl) {
+    watchlistEl.innerHTML = watchlist.length
+      ? watchlist.map(watchRow).join("")
+      : `<div class="empty-side">위에서 종목을 검색해 추가하세요.</div>`;
+  }
+  paintDetail();
+}
+
+function paintDetail(): void {
+  const existing = app.querySelector(".stock-hero");
+  if (!existing) {
+    if (filterId !== "all" && hasShell()) {
+      // Hero panel isn't mounted yet (e.g. first selection); only a full
+      // paint can insert it into the right spot in the tree.
+      paint();
+    }
+    return;
+  }
+  const html = stockDetailPanel();
+  if (!html) {
+    existing.remove();
+    return;
+  }
+  const temp = document.createElement("div");
+  temp.innerHTML = html;
+  const next = temp.firstElementChild;
+  if (next) existing.replaceWith(next);
 }
 
 function paintImmediate(): void {

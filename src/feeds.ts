@@ -61,6 +61,9 @@ function proxyUrls(url: string): string[] {
   ];
 }
 
+const YAHOO_HOSTS = new Set(["query1.finance.yahoo.com", "query2.finance.yahoo.com"]);
+
+
 function unwrapBody(raw: string): string {
   let text = raw.trim();
   const jina = text.match(/Markdown Content:\s*\r?\n([\s\S]*)/i);
@@ -115,7 +118,34 @@ async function fetchDirect(url: string, timeoutMs: number): Promise<string> {
 }
 
 export async function fetchText(url: string, timeoutMs = 5000): Promise<string> {
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    /* leave host empty; direct fetch below will just fail naturally */
+  }
+
   if (!isBrowser) {
+    if (YAHOO_HOSTS.has(host)) {
+      // Yahoo Finance frequently blocks/rate-limits datacenter and CI IPs
+      // (GitHub Actions runners included) with a fast 429, even though the
+      // exact same URL works fine through a proxy. Try direct first (fast
+      // path for local dev machines), then fall back to the browser's proxy
+      // chain so prefetch data doesn't end up empty.
+      try {
+        return await fetchDirect(url, Math.min(timeoutMs, 3000));
+      } catch {
+        let lastError = "yahoo fetch failed";
+        for (const target of proxyUrls(url)) {
+          try {
+            return await fetchVia(target, timeoutMs);
+          } catch (err) {
+            lastError = err instanceof Error ? err.message : String(err);
+          }
+        }
+        throw new Error(lastError);
+      }
+    }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
@@ -129,13 +159,8 @@ export async function fetchText(url: string, timeoutMs = 5000): Promise<string> 
       clearTimeout(timer);
     }
   }
-  try {
-    const host = new URL(url).hostname;
-    if (host === "api.stock.naver.com" || host === "m.stock.naver.com") {
-      return await fetchDirect(url, Math.min(timeoutMs, 4500));
-    }
-  } catch {
-    /* fall through to proxy */
+  if (host === "api.stock.naver.com" || host === "m.stock.naver.com") {
+    return await fetchDirect(url, Math.min(timeoutMs, 4500));
   }
   const proxies = proxyUrls(url);
   const fastMs = Math.min(timeoutMs, 3500);
@@ -662,13 +687,12 @@ export async function getQuotes(symbols: string[]): Promise<Quote[]> {
 }
 
 export async function getIndexBoard(): Promise<IndexQuote[]> {
-  const rows: IndexQuote[] = [];
-  for (const spec of INDEX_SPECS) {
-    const row = await fetchIndex(spec);
-    if (row) rows.push(row);
-    if (isBrowser) await sleep(300);
-  }
-  return rows;
+  const rows = await mapLimit(INDEX_SPECS, isBrowser ? 3 : 5, async (spec) => {
+    const row = await fetchIndex(spec).catch(() => null);
+    if (isBrowser) await sleep(120);
+    return row;
+  });
+  return rows.filter((row): row is IndexQuote => Boolean(row));
 }
 
 function intradayFromYahooRaw(raw: string, session: SessionKind): IntradayPoint[] {
