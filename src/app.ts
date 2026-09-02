@@ -116,22 +116,25 @@ function stockSparkBlock(detail: StockDetail, stock: Stock): string {
   const tone = detail.changePct > 0 ? "up" : detail.changePct < 0 ? "down" : "flat";
   const color = tone === "up" ? "var(--up)" : tone === "down" ? "var(--down)" : "var(--muted)";
   const gradId = `stock-spark-${stock.id}`;
+  const dotLeft = ((chart.lastX / chart.width) * 100).toFixed(2);
+  const dotTop = ((chart.lastY / chart.height) * 100).toFixed(2);
   return `
     <div class="stock-chart">
-      <svg class="spark" viewBox="0 0 ${chart.width} ${chart.height}" preserveAspectRatio="none" aria-hidden="true">
-        <defs>
-          <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="${color}" stop-opacity="0.32"></stop>
-            <stop offset="100%" stop-color="${color}" stop-opacity="0"></stop>
-          </linearGradient>
-        </defs>
-        <line class="spark-grid" x1="0" y1="${(chart.height * 0.33).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.33).toFixed(1)}"></line>
-        <line class="spark-grid" x1="0" y1="${(chart.height * 0.66).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.66).toFixed(1)}"></line>
-        <path class="spark-area" d="${chart.area}" fill="url(#${gradId})"></path>
-        <path class="spark-line" d="${chart.line}" fill="none" stroke="${color}" stroke-width="2.2" vector-effect="non-scaling-stroke"></path>
-        <circle class="spark-dot-halo" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="3.2" fill="${color}" opacity="0.18"></circle>
-        <circle class="spark-dot" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="1.6" fill="${color}"></circle>
-      </svg>
+      <div class="spark-wrap">
+        <svg class="spark" viewBox="0 0 ${chart.width} ${chart.height}" preserveAspectRatio="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="${color}" stop-opacity="0.32"></stop>
+              <stop offset="100%" stop-color="${color}" stop-opacity="0"></stop>
+            </linearGradient>
+          </defs>
+          <line class="spark-grid" x1="0" y1="${(chart.height * 0.33).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.33).toFixed(1)}"></line>
+          <line class="spark-grid" x1="0" y1="${(chart.height * 0.66).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.66).toFixed(1)}"></line>
+          <path class="spark-area" d="${chart.area}" fill="url(#${gradId})"></path>
+          <path class="spark-line" d="${chart.line}" fill="none" stroke="${color}" stroke-width="2.2" vector-effect="non-scaling-stroke"></path>
+        </svg>
+        <span class="spark-dot" style="left:${dotLeft}%;top:${dotTop}%;background:${color}"></span>
+      </div>
       <div class="spark-axis">
         <span class="spark-date">${esc(axis.labelStart)}</span>
         <span class="spark-range">${esc(formatPrice(chart.min, detail.currency))} – ${esc(formatPrice(chart.max, detail.currency))}</span>
@@ -919,22 +922,25 @@ function indexCard(row: IndexQuote): string {
   const pxFmt = row.priceFormat ?? "index";
   const axis = resolveSessionAxis(session);
   const gradId = `spark-${row.id}`;
+  const dotLeft = chart ? ((chart.lastX / chart.width) * 100).toFixed(2) : "0";
+  const dotTop = chart ? ((chart.lastY / chart.height) * 100).toFixed(2) : "0";
   const chartBlock = chart ? `
     <div class="index-chart">
-      <svg class="spark" viewBox="0 0 ${chart.width} ${chart.height}" preserveAspectRatio="none" aria-hidden="true">
-        <defs>
-          <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="${color}" stop-opacity="0.32"></stop>
-            <stop offset="100%" stop-color="${color}" stop-opacity="0"></stop>
-          </linearGradient>
-        </defs>
-        <line class="spark-grid" x1="0" y1="${(chart.height * 0.33).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.33).toFixed(1)}"></line>
-        <line class="spark-grid" x1="0" y1="${(chart.height * 0.66).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.66).toFixed(1)}"></line>
-        <path class="spark-area" d="${chart.area}" fill="url(#${gradId})"></path>
-        <path class="spark-line" d="${chart.line}" fill="none" stroke="${color}" stroke-width="2.2" vector-effect="non-scaling-stroke"></path>
-        <circle class="spark-dot-halo" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="3.2" fill="${color}" opacity="0.18"></circle>
-        <circle class="spark-dot" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="1.6" fill="${color}"></circle>
-      </svg>
+      <div class="spark-wrap">
+        <svg class="spark" viewBox="0 0 ${chart.width} ${chart.height}" preserveAspectRatio="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="${color}" stop-opacity="0.32"></stop>
+              <stop offset="100%" stop-color="${color}" stop-opacity="0"></stop>
+            </linearGradient>
+          </defs>
+          <line class="spark-grid" x1="0" y1="${(chart.height * 0.33).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.33).toFixed(1)}"></line>
+          <line class="spark-grid" x1="0" y1="${(chart.height * 0.66).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.66).toFixed(1)}"></line>
+          <path class="spark-area" d="${chart.area}" fill="url(#${gradId})"></path>
+          <path class="spark-line" d="${chart.line}" fill="none" stroke="${color}" stroke-width="2.2" vector-effect="non-scaling-stroke"></path>
+        </svg>
+        <span class="spark-dot" style="left:${dotLeft}%;top:${dotTop}%;background:${color}"></span>
+      </div>
       <div class="spark-axis">
         <span class="spark-date">${esc(axis.labelStart)}</span>
         <span class="spark-range">${esc(formatIndexPrice(chart.min, pxFmt))} – ${esc(formatIndexPrice(chart.max, pxFmt))}</span>
