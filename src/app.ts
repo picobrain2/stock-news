@@ -1,6 +1,6 @@
 import { classifyTone } from "./impact";
 import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStockDetail, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuoteQuick, fetchQuotes, fetchReview, fetchStockDetail, fetchStockNews, lastPulls, loadDetailCache, searchRemote } from "./api";
-import { fetchStockSpark, INDEX_REFRESH_MS } from "./feeds";
+import { fetchStockSpark, INDEX_REFRESH_MS, QUOTE_REFRESH_MS } from "./feeds";
 import { detailFromQuote, mergeStockDetail } from "./naverStock";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
@@ -608,12 +608,19 @@ async function refreshQuotesInner(live = true): Promise<void> {
     rememberQuotes(await fetchQuotes(watchlist, snap(), false));
     if (!live) return;
     paintQuotes();
-    if (watchlist.every((s) => quoteFor(s))) return;
+    // Always re-fetch live prices for the whole watchlist, even when every
+    // stock already has a (possibly stale, bundled) quote - fetchQuoteOnce()
+    // has its own short TTL cache, so this stays cheap while keeping prices
+    // actually ticking instead of freezing at the last CI snapshot.
     rememberQuotes(await fetchQuotes(watchlist, snap(), true));
     paintQuotes();
   } catch {
     /* quotes are optional */
   }
+}
+
+function shouldPollQuotes(): boolean {
+  return watchlist.length > 0 && document.visibilityState === "visible";
 }
 
 function shouldPollIndices(): boolean {
@@ -1356,8 +1363,12 @@ export function render(): void {
   window.setInterval(() => {
     if (shouldPollIndices()) void refreshIndices({ live: true });
   }, INDEX_REFRESH_MS);
+  window.setInterval(() => {
+    if (shouldPollQuotes()) void refreshQuotes({ live: true });
+  }, QUOTE_REFRESH_MS);
   document.addEventListener("visibilitychange", () => {
     if (shouldPollIndices()) void refreshIndices({ live: true });
+    if (shouldPollQuotes()) void refreshQuotes({ live: true });
   });
   window.setInterval(updateStatusPills, 30_000);
 

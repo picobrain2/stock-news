@@ -13,6 +13,7 @@ const UA =
 const cache = new Map<string, { at: number; data: unknown }>();
 const CACHE_MS = 90_000;
 export const INDEX_REFRESH_MS = 45_000;
+export const QUOTE_REFRESH_MS = 45_000;
 const INDEX_CACHE_MS = 25_000;
 
 function optionalNum(raw: unknown): number | undefined {

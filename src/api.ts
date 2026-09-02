@@ -131,18 +131,16 @@ export async function fetchQuotes(stocks: Stock[], previous: Quote[] = [], live 
     rows = mergeQuotes(rows, fromFile);
   }
   if (!live) return mergeQuotes(previous, rows).filter((q) => q.price > 0 && wanted.has(q.symbol));
-  const have = new Set<string>();
-  for (const q of [...rows, ...previous]) {
-    if (q.price > 0 && wanted.has(q.symbol)) have.add(q.symbol);
-  }
-  const missing = stocks.map((s) => s.yahoo).filter((symbol) => !have.has(symbol));
+  // Always re-fetch every watchlisted symbol live, not just ones missing a
+  // quote entirely - otherwise a stock that already has a stale bundled
+  // price never gets refreshed again and just sits frozen. getQuotes()
+  // (via fetchQuoteOnce) has its own ~60s cache, so calling it on every
+  // "live" pass stays cheap and just returns the cached value in between.
   let result = rows.filter((q) => q.price > 0);
-  if (missing.length > 0) {
-    try {
-      result = mergeQuotes(rows, take(await getQuotes(missing))).filter((q) => q.price > 0);
-    } catch {
-      result = rows.filter((q) => q.price > 0);
-    }
+  try {
+    result = mergeQuotes(rows, take(await getQuotes(stocks.map((s) => s.yahoo)))).filter((q) => q.price > 0);
+  } catch {
+    result = rows.filter((q) => q.price > 0);
   }
   return mergeQuotes(previous, result).filter((q) => q.price > 0 && wanted.has(q.symbol));
 }
