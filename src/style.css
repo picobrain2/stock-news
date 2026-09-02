@@ -346,6 +346,25 @@ body { background: var(--bg); color: var(--text); }
   color: var(--muted);
   font-size: 13px;
 }
+.stock-extended {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--gold) 10%, transparent);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.stock-extended .ext-tag {
+  color: var(--gold);
+  font-weight: 700;
+}
+.stock-extended .ext-px {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
 .stock-chart {
   margin-top: 14px;
   padding-top: 12px;

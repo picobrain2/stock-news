@@ -5,7 +5,7 @@ import { detailFromQuote, mergeStockDetail } from "./naverStock";
 import { loadArchive, saveArchive } from "./archive";
 import { findStock, popularStocks, searchCatalog, typedStock } from "./catalog";
 import { buildSparkChart, INDEX_SPECS, indexSession, isStaleSessionSpark, resolveSessionAxis, sanitizeIndexRows } from "./indices";
-import { formatDay, formatIndexPrice, formatPct, formatPrice, formatRange, fromNow, isFresh, marketStatus } from "./time";
+import { formatDay, formatIndexPrice, formatPct, formatPrice, formatRange, fromNow, isFresh, marketStatus, sessionPhaseFor } from "./time";
 import { cleanSnippet, needsKorean } from "./text";
 import { translateNewsItem } from "./translate";
 import type { IndexQuote, NewsItem, Quote, ReviewBundle, ReviewRange, SearchHit, Stock, StockDetail, Tab } from "./types";
@@ -817,6 +817,24 @@ function watchRow(stock: Stock): string {
   `;
 }
 
+function extendedBlock(detail: StockDetail, stock: Stock): string {
+  const ext = detail.extended;
+  if (!ext) return "";
+  if (sessionPhaseFor(stock.market) !== ext.session) return "";
+  const label = ext.session === "pre"
+    ? (stock.market === "kr" ? "NXT 프리마켓" : "프리마켓")
+    : (stock.market === "kr" ? "NXT 애프터마켓" : "애프터마켓");
+  const tone = ext.changePct > 0 ? "up" : ext.changePct < 0 ? "down" : "muted";
+  const live = ext.status === "open" ? "" : " · 마감";
+  return `
+    <div class="stock-extended">
+      <span class="ext-tag">${esc(label)}${live}</span>
+      <span class="ext-px">${esc(formatPrice(ext.price, detail.currency))}</span>
+      <span class="${tone}">${esc(formatPct(ext.changePct))}</span>
+    </div>
+  `;
+}
+
 function stockDetailPanel(): string {
   const stock = stockById(filterId);
   if (!stock) return "";
@@ -853,6 +871,7 @@ function stockDetailPanel(): string {
         <span class="px-big">${esc(formatPrice(q.price, q.currency))}</span>
         <span class="${tone}">${esc(formatPct(q.changePct))}${esc(change)}</span>
       </div>
+      ${extendedBlock(q, stock)}
       ${stockSparkBlock(q, stock)}
       ${pending ? `<p class="stock-pending muted">지표 불러오는 중…</p>` : ""}
       ${q.targetPrice ? `<div class="stock-target">목표가 <strong>${esc(q.targetPrice)}</strong>${q.recommend ? ` · 컨센서스 ${esc(q.recommend)}` : ""}</div>` : ""}
@@ -1008,7 +1027,7 @@ function updateIndexBoard(): void {
 
 function indexBoardHint(): string {
   const st = marketStatus();
-  if (st.kr === "한국 개장" || st.us === "미국 개장") return "당일 장중 · 5분봉";
+  if (st.krPhase === "regular" || st.usPhase === "regular") return "당일 장중 · 5분봉";
   return "금일 장 마감 · 5분봉";
 }
 

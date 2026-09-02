@@ -107,12 +107,64 @@ export function formatPct(pct: number): string {
   return `${sign}${pct.toFixed(2)}%`;
 }
 
+export type SessionPhase = "pre" | "regular" | "after" | "closed";
+
+const PHASE_LABEL: Record<SessionPhase, string> = {
+  pre: "프리마켓",
+  regular: "정규장",
+  after: "애프터마켓",
+  closed: "휴장",
+};
+
+function localAtOffset(now: Date, offsetHours: number): Date {
+  const utc = now.getTime() + now.getTimezoneOffset() * 60_000;
+  return new Date(utc + offsetHours * 3_600_000);
+}
+
+export function krSessionPhase(now = new Date()): SessionPhase {
+  const local = localAtOffset(now, 9);
+  if (!isWeekday(local)) return "closed";
+  if (inMinutes(local, 8, 0, 8, 50)) return "pre";
+  if (inMinutes(local, 9, 0, 15, 30)) return "regular";
+  if (inMinutes(local, 15, 30, 20, 0)) return "after";
+  return "closed";
+}
+
+export function usSessionPhase(now = new Date()): SessionPhase {
+  const usNow = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  if (!isWeekday(usNow)) return "closed";
+  if (inMinutes(usNow, 4, 0, 9, 30)) return "pre";
+  if (inMinutes(usNow, 9, 30, 16, 0)) return "regular";
+  if (inMinutes(usNow, 16, 0, 20, 0)) return "after";
+  return "closed";
+}
+
+export function sessionPhaseFor(market: "kr" | "us", now = new Date()): SessionPhase {
+  return market === "kr" ? krSessionPhase(now) : usSessionPhase(now);
+}
+
+export function marketStatus(now = new Date()): {
+  kr: string;
+  us: string;
+  krPhase: SessionPhase;
+  usPhase: SessionPhase;
+} {
+  const kp = krSessionPhase(now);
+  const up = usSessionPhase(now);
+  return {
+    kr: `한국 ${PHASE_LABEL[kp]}`,
+    us: `미국 ${PHASE_LABEL[up]}`,
+    krPhase: kp,
+    usPhase: up,
+  };
+}
+
 export function isKrMarketOpen(now = new Date()): boolean {
-  return marketStatus(now).kr === "한국 개장";
+  return krSessionPhase(now) === "regular";
 }
 
 export function isUsMarketOpen(now = new Date()): boolean {
-  return marketStatus(now).us === "미국 개장";
+  return usSessionPhase(now) === "regular";
 }
 
 export function minutesInTimeZone(ts: number, timeZone: string): number {
@@ -168,22 +220,6 @@ export function tsAtSessionMinute(dateKey: string, minuteOfDay: number, timeZone
 }
 
 const sessionMinuteCache = new Map<string, number>();
-
-export function marketStatus(now = new Date()): { kr: string; us: string } {
-  const krOpen = isOpen(now, 9, 0, 15, 30, 9);
-  const usNow = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
-  const usOpen = isWeekday(usNow) && inMinutes(usNow, 9, 30, 16, 0);
-  return {
-    kr: krOpen ? "한국 개장" : "한국 휴장",
-    us: usOpen ? "미국 개장" : "미국 휴장",
-  };
-}
-
-function isOpen(now: Date, h1: number, m1: number, h2: number, m2: number, offsetHours: number): boolean {
-  const utc = now.getTime() + now.getTimezoneOffset() * 60_000;
-  const local = new Date(utc + offsetHours * 3_600_000);
-  return isWeekday(local) && inMinutes(local, h1, m1, h2, m2);
-}
 
 function isWeekday(d: Date): boolean {
   const day = d.getDay();

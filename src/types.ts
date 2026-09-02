@@ -74,6 +74,15 @@ export interface StockStat {
   value: string;
 }
 
+export interface ExtendedQuote {
+  session: "pre" | "after";
+  status: "open" | "close";
+  price: number;
+  changePct: number;
+  change?: string;
+  at?: number;
+}
+
 export interface StockDetail {
   id: string;
   name: string;
@@ -88,6 +97,7 @@ export interface StockDetail {
   naverUrl: string;
   spark?: number[];
   sparkAt?: number[];
+  extended?: ExtendedQuote;
 }
 
 export interface ReviewEvent {

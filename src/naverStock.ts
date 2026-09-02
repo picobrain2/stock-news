@@ -1,4 +1,15 @@
-import type { Quote, Stock, StockDetail, StockStat } from "./types";
+import type { ExtendedQuote, Quote, Stock, StockDetail, StockStat } from "./types";
+
+type NaverOverMarket = {
+  tradingSessionType?: string;
+  overMarketStatus?: string;
+  overPrice?: string;
+  overPriceRaw?: number;
+  fluctuationsRatio?: string;
+  fluctuationsRatioRaw?: number;
+  compareToPreviousClosePrice?: string;
+  localTradedAt?: string;
+};
 
 type NaverBasic = {
   stockName?: string;
@@ -8,6 +19,7 @@ type NaverBasic = {
   stockExchangeName?: string;
   stockExchangeType?: { code?: string; name?: string };
   currencyType?: { code?: string };
+  overMarketPriceInfo?: NaverOverMarket;
 };
 
 type NaverInfo = { key?: string; value?: string; code?: string };
@@ -95,6 +107,28 @@ export function mergeStockDetail(base: StockDetail, patch: StockDetail): StockDe
     exchange: patch.exchange || base.exchange,
     naverUrl: patch.naverUrl || base.naverUrl,
     change: patch.change ?? base.change,
+    extended: patch.extended ?? base.extended,
+  };
+}
+
+function parseExtended(info: NaverOverMarket | undefined): ExtendedQuote | undefined {
+  if (!info?.tradingSessionType) return undefined;
+  const session = info.tradingSessionType === "PRE_MARKET"
+    ? "pre"
+    : info.tradingSessionType === "AFTER_MARKET"
+      ? "after"
+      : undefined;
+  if (!session) return undefined;
+  const price = info.overPriceRaw ?? num(info.overPrice);
+  if (!Number.isFinite(price) || price <= 0) return undefined;
+  const changePct = info.fluctuationsRatioRaw ?? num(info.fluctuationsRatio);
+  return {
+    session,
+    status: info.overMarketStatus === "OPEN" ? "open" : "close",
+    price,
+    changePct: Number.isFinite(changePct) ? changePct : 0,
+    change: info.compareToPreviousClosePrice,
+    at: info.localTradedAt ? Date.parse(info.localTradedAt) : undefined,
   };
 }
 
@@ -164,5 +198,6 @@ export async function getStockDetail(
     targetPrice: target,
     recommend: consensus?.recommMean,
     naverUrl: naverPageUrl(code, kr),
+    extended: parseExtended(basic.overMarketPriceInfo),
   };
 }
