@@ -129,8 +129,8 @@ function stockSparkBlock(detail: StockDetail, stock: Stock): string {
         <line class="spark-grid" x1="0" y1="${(chart.height * 0.66).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.66).toFixed(1)}"></line>
         <path class="spark-area" d="${chart.area}" fill="url(#${gradId})"></path>
         <path class="spark-line" d="${chart.line}" fill="none" stroke="${color}" stroke-width="2.2" vector-effect="non-scaling-stroke"></path>
-        <circle class="spark-dot-halo" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="6" fill="${color}" opacity="0.18"></circle>
-        <circle class="spark-dot" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="3" fill="${color}"></circle>
+        <circle class="spark-dot-halo" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="3.2" fill="${color}" opacity="0.18"></circle>
+        <circle class="spark-dot" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="1.6" fill="${color}"></circle>
       </svg>
       <div class="spark-axis">
         <span class="spark-date">${esc(axis.labelStart)}</span>
@@ -932,8 +932,8 @@ function indexCard(row: IndexQuote): string {
         <line class="spark-grid" x1="0" y1="${(chart.height * 0.66).toFixed(1)}" x2="${chart.width}" y2="${(chart.height * 0.66).toFixed(1)}"></line>
         <path class="spark-area" d="${chart.area}" fill="url(#${gradId})"></path>
         <path class="spark-line" d="${chart.line}" fill="none" stroke="${color}" stroke-width="2.2" vector-effect="non-scaling-stroke"></path>
-        <circle class="spark-dot-halo" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="6" fill="${color}" opacity="0.18"></circle>
-        <circle class="spark-dot" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="3" fill="${color}"></circle>
+        <circle class="spark-dot-halo" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="3.2" fill="${color}" opacity="0.18"></circle>
+        <circle class="spark-dot" cx="${chart.lastX.toFixed(1)}" cy="${chart.lastY.toFixed(1)}" r="1.6" fill="${color}"></circle>
       </svg>
       <div class="spark-axis">
         <span class="spark-date">${esc(axis.labelStart)}</span>
