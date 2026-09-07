@@ -21,6 +21,7 @@ function authUrl(): string {
 
 type TokenCache = { token: string; exp: number };
 let tokenCache: TokenCache | null = null;
+let tokenInflight: Promise<string | null> | null = null;
 
 let lastCallAt = 0;
 const MIN_GAP_MS = 260; // ~4 calls/sec (NH limit ~5/s)
@@ -73,38 +74,47 @@ async function getToken(force = false): Promise<string | null> {
   if (!key || !secret) return null;
   const now = Date.now() / 1000;
   if (!force && tokenCache && tokenCache.exp > now + 30) return tokenCache.token;
+  if (!force && tokenInflight) return tokenInflight;
 
-  const url = new URL(`${authUrl()}/oauth2/token`);
-  url.searchParams.set("appkey", key);
-  url.searchParams.set("appsecretkey", secret);
-  url.searchParams.set("grant_type", "client_credentials");
-  url.searchParams.set("scope", "oob");
+  const job = (async (): Promise<string | null> => {
+    const url = new URL(`${authUrl()}/oauth2/token`);
+    url.searchParams.set("appkey", key);
+    url.searchParams.set("appsecretkey", secret);
+    url.searchParams.set("grant_type", "client_credentials");
+    url.searchParams.set("scope", "oob");
 
-  try {
-    await throttle();
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) {
-      console.warn(`namuh token ${res.status}`);
+    try {
+      await throttle();
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!res.ok) {
+        console.warn(`namuh token ${res.status}`);
+        return null;
+      }
+      const data = (await res.json()) as { access_token?: string; expires_in?: number };
+      if (!data.access_token) {
+        console.warn("namuh token missing access_token");
+        return null;
+      }
+      const issuedAt = Date.now() / 1000;
+      tokenCache = {
+        token: data.access_token,
+        exp: issuedAt + Number(data.expires_in ?? 86_400),
+      };
+      return tokenCache.token;
+    } catch (err) {
+      console.warn("namuh token failed", err instanceof Error ? err.message : err);
       return null;
+    } finally {
+      tokenInflight = null;
     }
-    const data = (await res.json()) as { access_token?: string; expires_in?: number };
-    if (!data.access_token) {
-      console.warn("namuh token missing access_token");
-      return null;
-    }
-    tokenCache = {
-      token: data.access_token,
-      exp: now + Number(data.expires_in ?? 86_400),
-    };
-    return tokenCache.token;
-  } catch (err) {
-    console.warn("namuh token failed", err instanceof Error ? err.message : err);
-    return null;
-  }
+  })();
+
+  tokenInflight = job;
+  return job;
 }
 
 type CurrentPriceOut = {
