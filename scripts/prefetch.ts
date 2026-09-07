@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { mergeNews, mergePulls, mergeQuotes, pruneNews } from "../src/archive";
 import { defaultWatchlist, popularStocks } from "../src/catalog";
 import { enrichSnippets, fetchText, getIndexBoard, getMarketNews, getQuotes, getStockNews } from "../src/feeds";
+import { namuhEnabled, namuhStats, resetNamuhStats } from "../src/namuh";
 import { mergeIndices } from "../src/indices";
 import { getStockDetail } from "../src/naverStock";
 import { buildReviewBundle } from "../src/review";
@@ -86,6 +87,7 @@ async function main(): Promise<void> {
     readLiveIndices(),
     getMarketNews(),
     getStockNews(stocks, { light: true }),
+    resetNamuhStats();
     getQuotes(stocks.map((s) => s.yahoo)),
     getIndexBoard().catch((err: unknown) => {
       console.error("indices failed", err);
@@ -133,6 +135,7 @@ async function main(): Promise<void> {
   console.log(`quotes ${quotesMerged.length} symbols, details ${Object.keys(stockDetails).length}`);
   console.log(`indices ${indicesMerged.map((i) => i.name).join(", ") || "none"}`);
   console.log("pulls", pullsMerged.map((p) => `${p.source}:${p.ok ? p.count : "fail"}`).join(", "));
+  console.log(`namuh quotes ${namuhEnabled() ? `${namuhStats.ok}ok/${namuhStats.fail}fail` : "skip"}`);
   console.log(`review day=${reviewBundle.day?.timeline.length ?? 0} week=${reviewBundle.week?.timeline.length ?? 0} month=${reviewBundle.month?.timeline.length ?? 0} year=${reviewBundle.year?.timeline.length ?? 0}`);
 }
 

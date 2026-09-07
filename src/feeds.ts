@@ -1,4 +1,5 @@
 import { finnhubCompanyNews, finnhubEnabled, finnhubMarketNews } from "./finnhub";
+import { namuhEnabled, namuhQuote } from "./namuh";
 import { isGoogleNewsBoilerplate, isGoogleNewsUrl, resolveGoogleNewsUrl } from "./googleNews";
 import { classifyTone, inferRegion, isMarketRelevant, isOffTopicNews, scoreImpact } from "./impact";
 import { INDEX_SPECS, indexSession, resolveSessionAxis, SESSION_BOUNDS, DISPLAY_TZ, mergeIndexQuote, type IndexSpec, type SessionKind } from "./indices";
@@ -983,8 +984,17 @@ async function fetchQuoteOnce(symbol: string): Promise<Quote | null> {
     }
     return null;
   };
+  const fromNamuh = async (): Promise<Quote | null> => {
+    // Prefetch/CI only — browser keeps Naver for live polls (no key in client).
+    if (!kr || isBrowser || !namuhEnabled()) return null;
+    try {
+      return await namuhQuote(symbol);
+    } catch {
+      return null;
+    }
+  };
 
-  quote = (await fromNaver()) ?? (await fromYahoo());
+  quote = (await fromNamuh()) ?? (await fromNaver()) ?? (await fromYahoo());
   if (!goodQuote(quote)) quote = null;
   if (goodQuote(quote) || !goodQuote(hit?.data as Quote | null)) {
     cache.set(`quote:${symbol}`, { at: Date.now(), data: quote });

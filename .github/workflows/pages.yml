@@ -30,6 +30,8 @@ jobs:
       - run: npm run build:site
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          NHPLUG_APP_KEY: ${{ secrets.NHPLUG_APP_KEY }}
+          NHPLUG_APP_SECRET: ${{ secrets.NHPLUG_APP_SECRET }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
