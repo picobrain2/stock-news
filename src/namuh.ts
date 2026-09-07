@@ -1,6 +1,7 @@
 /**
  * Namuh (NHPLUG) REST — domestic quotes only.
- * Node/prefetch only. Never call from the browser (keys must stay server-side).
+ * Node-only helper for a future backend/Worker. Prefetch no longer pulls quotes;
+ * live UI uses Naver/Yahoo in the browser. Never call from the browser (keys).
  * Do NOT add order/balance endpoints here.
  */
 import type { Quote } from "./types";

@@ -1,5 +1,5 @@
 import { classifyTone } from "./impact";
-import { bundledMarket, bundledIndices, bundledPulls, bundledQuotes, bundledReview, bundledStockDetail, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuoteQuick, fetchQuotes, fetchReview, fetchStockDetail, fetchStockNews, lastPulls, loadDetailCache, searchRemote } from "./api";
+import { bundledMarket, bundledPulls, bundledReview, bundledStockDetail, bundledStocks, bundleFetchedAt, fetchIndices, fetchMarket, fetchQuoteQuick, fetchQuotes, fetchReview, fetchStockDetail, fetchStockNews, lastPulls, loadDetailCache, searchRemote } from "./api";
 import { fetchStockSpark, INDEX_REFRESH_MS, QUOTE_REFRESH_MS } from "./feeds";
 import { detailFromQuote, mergeStockDetail } from "./naverStock";
 import { loadArchive, saveArchive } from "./archive";
@@ -17,11 +17,8 @@ const boot = loadArchive();
 
 let tab: Tab = "market";
 let watchlist = loadWatchlist();
-let quotes = new Map(
-  (boot.quotes.length ? boot.quotes : bundledQuotes())
-    .filter((q) => q.price > 0)
-    .map((q) => [q.symbol, q]),
-);
+// Quotes/indices start empty — live poll fills them (no stale CI snapshot).
+let quotes = new Map<string, Quote>();
 let marketNews: NewsItem[] = boot.market.length ? boot.market : bundledMarket();
 let stockNews: NewsItem[] = boot.stocks.length ? boot.stocks : bundledStocks();
 let filterId = "all";
@@ -38,8 +35,8 @@ let hiddenSources = loadHiddenSources();
 let reviewBundle: ReviewBundle = bundledReview();
 let loadingReview = !(reviewBundle.day || reviewBundle.week);
 let searchTimer = 0;
-let indices: IndexQuote[] = sanitizeIndexRows(boot.indices?.length ? boot.indices : bundledIndices());
-let loadingIndices = indices.length === 0;
+let indices: IndexQuote[] = [];
+let loadingIndices = true;
 type MobilePane = "news" | "watch";
 let mobilePane: MobilePane = "news";
 let stockDetail: StockDetail | null = null;
@@ -462,12 +459,13 @@ async function refreshAll(): Promise<void> {
   batchingRefresh += 1;
   try {
     error = "";
+    // News/review from CI JSON; quotes/indices go straight to live APIs.
     await Promise.all([
       refreshMarket(),
       refreshMine(),
-      refreshQuotes({ live: false }),
-      refreshIndices({ live: false }),
       refreshReview(),
+      refreshQuotes({ live: true }),
+      refreshIndices({ live: true }),
     ]);
     lastFetch = bundleFetchedAt || Date.now();
     if (lastPulls.length) sourcePulls = lastPulls;
@@ -476,16 +474,8 @@ async function refreshAll(): Promise<void> {
     batchingRefresh -= 1;
     paintImmediate();
   }
-  void refreshLiveTail();
 }
 
-async function refreshLiveTail(): Promise<void> {
-  await Promise.all([
-    refreshQuotes({ live: true }),
-    refreshIndices({ live: true }),
-  ]);
-  if (hasShell()) updateIndexBoard();
-}
 
 async function refreshReview(): Promise<void> {
   loadingReview = true;
@@ -636,14 +626,8 @@ async function refreshQuotes(opts?: { live?: boolean }): Promise<void> {
 async function refreshQuotesInner(live = true): Promise<void> {
   try {
     const snap = () => [...quotes.values(), ...stickyQuotes.values()];
-    rememberQuotes(await fetchQuotes(watchlist, snap(), false));
-    if (!live) return;
-    paintQuotes();
-    // Always re-fetch live prices for the whole watchlist, even when every
-    // stock already has a (possibly stale, bundled) quote - fetchQuoteOnce()
-    // has its own short TTL cache, so this stays cheap while keeping prices
-    // actually ticking instead of freezing at the last CI snapshot.
-    rememberQuotes(await fetchQuotes(watchlist, snap(), true));
+    // Skip CI quotes.json — always hit live providers when live=true.
+    rememberQuotes(await fetchQuotes(watchlist, snap(), live));
     paintQuotes();
   } catch {
     /* quotes are optional */
@@ -1226,7 +1210,7 @@ function paintNow(): void {
         </section>
         `}
         <footer class="foot">
-          ${lastFetch ? `뉴스 수집 ${esc(fromNow(lastFetch))}` : ""} · ${tab === "review" ? "오늘 · 1주일 · 1개월 · 1년 정리" : "언론사 클릭으로 숨김 · 하루치 보관"}
+          ${lastFetch ? `뉴스 수집 ${esc(fromNow(lastFetch))}` : ""} · ${tab === "review" ? "오늘 · 1주일 · 1개월 · 1년 정리" : "시세·지수는 실시간 · 뉴스는 주기 수집"}
         </footer>
       </main>
       <nav class="mob-nav" aria-label="화면 전환">

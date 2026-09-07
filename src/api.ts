@@ -122,16 +122,16 @@ export async function fetchQuotes(stocks: Stock[], previous: Quote[] = [], live 
     const data = await getJson<{ quotes: Quote[] }>(`/api/quotes?s=${encodeURIComponent(s)}`);
     return mergeQuotes(rows, take(data.quotes ?? []));
   }
-  let fromFile: Quote[] = [];
-  try {
-    const data = await getJson<{ quotes: Quote[] }>(dataUrl("quotes.json"));
-    fromFile = take(data.quotes ?? []);
-    rows = mergeQuotes(rows, fromFile);
-  } catch {
-    fromFile = take(bundledQuotes());
-    rows = mergeQuotes(rows, fromFile);
+  if (!live) {
+    // Prefetch no longer fills quotes.json; keep path for local/dev fallbacks.
+    try {
+      const data = await getJson<{ quotes: Quote[] }>(dataUrl("quotes.json"));
+      rows = mergeQuotes(rows, take(data.quotes ?? []));
+    } catch {
+      rows = mergeQuotes(rows, take(bundledQuotes()));
+    }
+    return mergeQuotes(previous, rows).filter((q) => q.price > 0 && wanted.has(q.symbol));
   }
-  if (!live) return mergeQuotes(previous, rows).filter((q) => q.price > 0 && wanted.has(q.symbol));
   // Always re-fetch every watchlisted symbol live, not just ones missing a
   // quote entirely - otherwise a stock that already has a stale bundled
   // price never gets refreshed again and just sits frozen. getQuotes()
@@ -152,18 +152,20 @@ export async function fetchIndices(previous: IndexQuote[] = [], live = true): Pr
     const data = await getJson<{ indices: IndexQuote[] }>("/api/indices");
     return mergeIndices(seed, data.indices ?? []);
   }
-  let rows = mergeIndices([], seed, bundledIndices());
-  try {
-    const data = await getJson<{ indices?: IndexQuote[] }>(dataUrl("indices.json"));
-    rows = mergeIndices(rows, data.indices ?? [], bundledIndices());
-  } catch {
-    rows = mergeIndices(rows, bundledIndices(), bundledIndices());
+  let rows = seed;
+  if (!live) {
+    try {
+      const data = await getJson<{ indices?: IndexQuote[] }>(dataUrl("indices.json"));
+      rows = mergeIndices(rows, data.indices ?? [], bundledIndices());
+    } catch {
+      rows = mergeIndices(rows, bundledIndices());
+    }
+    return rows;
   }
-  if (!live) return rows;
   try {
     return mergeIndices(rows, await getIndexBoard(), bundledIndices());
   } catch {
-    return rows;
+    return rows.length ? rows : bundledIndices();
   }
 }
 
