@@ -55,6 +55,7 @@ export function bundledPulls(): SourcePull[] {
 
 export function bundledReview(): ReviewBundle {
   return {
+    day: reviewSnap.day ?? null,
     week: reviewSnap.week ?? null,
     month: reviewSnap.month ?? null,
     year: reviewSnap.year ?? null,

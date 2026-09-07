@@ -4,7 +4,7 @@ const rtf = new Intl.RelativeTimeFormat("ko", { numeric: "auto" });
 
 export function rangeWindow(range: ReviewRange): { from: number; to: number; maxAgeMs: number } {
   const to = Date.now();
-  const days = range === "week" ? 7 : range === "month" ? 30 : 365;
+  const days = range === "day" ? 1 : range === "week" ? 7 : range === "month" ? 30 : 365;
   const maxAgeMs = days * 86_400_000;
   return { from: to - maxAgeMs, to, maxAgeMs };
 }

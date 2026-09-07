@@ -9,6 +9,7 @@ import { formatDay, formatIndexPrice, formatPct, formatPrice, formatRange, fromN
 import { cleanSnippet, needsKorean } from "./text";
 import { translateNewsItem } from "./translate";
 import type { IndexQuote, NewsItem, Quote, ReviewBundle, ReviewRange, SearchHit, Stock, StockDetail, Tab } from "./types";
+import { loadHiddenSources, saveHiddenSources } from "./hiddenSources";
 import { loadWatchlist, saveWatchlist } from "./watchlist";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -32,9 +33,10 @@ let loadingMine = stockNews.length === 0;
 let error = "";
 let lastFetch = boot.fetchedAt;
 let sourcePulls = boot.pulls?.length ? boot.pulls : bundledPulls();
-let reviewRange: ReviewRange = "week";
+let reviewRange: ReviewRange = "day";
+let hiddenSources = loadHiddenSources();
 let reviewBundle: ReviewBundle = bundledReview();
-let loadingReview = !reviewBundle.week;
+let loadingReview = !(reviewBundle.day || reviewBundle.week);
 let searchTimer = 0;
 let indices: IndexQuote[] = sanitizeIndexRows(boot.indices?.length ? boot.indices : bundledIndices());
 let loadingIndices = indices.length === 0;
@@ -235,6 +237,7 @@ function seedQuote(stock: Stock, hit: SearchHit | Stock): void {
 function visibleNews(): NewsItem[] {
   const source = tab === "market" ? marketNews : stockNews;
   return source.filter((item) => {
+    if (hiddenSources.has(item.source)) return false;
     if (regionFilter !== "all" && item.region !== regionFilter && item.region !== "global") return false;
     if (tab === "mine" && filterId !== "all" && !item.stockIds.includes(filterId)) return false;
     return true;
@@ -242,7 +245,7 @@ function visibleNews(): NewsItem[] {
 }
 
 function feedContextKey(): string {
-  return `${tab}:${regionFilter}:${filterId}`;
+  return `${tab}:${regionFilter}:${filterId}:${[...hiddenSources].sort().join("|")}`;
 }
 
 function resetFeedWindowIfNeeded(): void {
@@ -497,9 +500,37 @@ async function refreshReview(): Promise<void> {
   }
 }
 
+
+function toggleHiddenSource(source: string): void {
+  if (!source.trim()) return;
+  if (hiddenSources.has(source)) hiddenSources.delete(source);
+  else hiddenSources.add(source);
+  saveHiddenSources(hiddenSources);
+  paint();
+}
+
+function sourceFilterHTML(items: NewsItem[]): string {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    if (!item.source) continue;
+    counts.set(item.source, (counts.get(item.source) ?? 0) + 1);
+  }
+  const rows = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ko"));
+  if (rows.length === 0) return "";
+  return `<div class="pulls source-filters" aria-label="언론사 필터">
+    ${rows.map(([source, count]) => {
+      const hidden = hiddenSources.has(source);
+      return `<button type="button" class="pull source-chip${hidden ? " off" : ""}" data-toggle-source="${esc(source)}" title="${hidden ? "다시 보기" : "숨기기"}">
+        <strong>${esc(source)}</strong>
+        <span>${count}</span>
+      </button>`;
+    }).join("")}
+  </div>`;
+}
+
 function reviewPane(): string {
   const packed = reviewBundle[reviewRange];
-  const label = reviewRange === "week" ? "지난 일주일" : reviewRange === "month" ? "지난 한 달" : "지난 1년";
+  const label = reviewRange === "day" ? "오늘" : reviewRange === "week" ? "지난 일주일" : reviewRange === "month" ? "지난 한 달" : "지난 1년";
   if (loadingReview && !packed) return skeleton();
   if (!packed || (packed.timeline.length === 0 && packed.themes.length === 0)) {
     return `<div class="empty">${esc(label)} 정리를 아직 못 모았습니다. 약 10분마다 다시 만듭니다.</div>`;
@@ -792,7 +823,7 @@ function newsCard(item: NewsItem): string {
         ${showTone ? `<span class="tone ${call.tone}">${esc(toneLabel)}</span>` : ""}
         <span class="when">${item.publishedAt > 0 ? esc(fromNow(item.publishedAt)) : "시간 미상"}</span>
         <span class="dot">·</span>
-        <span class="src">${esc(item.source)}</span>
+        <button type="button" class="src source-chip${hiddenSources.has(item.source) ? " off" : ""}" data-toggle-source="${esc(item.source)}">${esc(item.source)}</button>
         <span class="region">${item.region === "kr" ? "한국" : item.region === "us" ? "미국" : "글로벌"}</span>
         ${impact ? `<span class="impact ${impact}">영향 ${impact === "high" ? "큼" : "있음"}</span>` : ""}
       </div>
@@ -1161,6 +1192,7 @@ function paintNow(): void {
           <div class="top-actions">
             <div class="seg">
               ${tab === "review" ? `
+                <button class="seg-btn${reviewRange === "day" ? " on" : ""}" data-span="day">오늘</button>
                 <button class="seg-btn${reviewRange === "week" ? " on" : ""}" data-span="week">1주일</button>
                 <button class="seg-btn${reviewRange === "month" ? " on" : ""}" data-span="month">1개월</button>
                 <button class="seg-btn${reviewRange === "year" ? " on" : ""}" data-span="year">1년</button>
@@ -1180,9 +1212,10 @@ function paintNow(): void {
             <button class="chip${filterId === "all" ? " on" : ""}" data-filter="all">전체</button>
             ${watchlist.map((s) => `<button class="chip${filterId === s.id ? " on" : ""}" data-filter="${esc(s.id)}">${esc(s.name)}</button>`).join("")}
           </div>
+          ${sourceFilterHTML(stockNews)}
           ${filterId !== "all" ? stockDetailPanel() : ""}
         ` : `${indexBoard()}<p class="lead">금리 · 환율 · 실적 · 지정학처럼 증시에 바로 닿을 수 있는 소식만 모아 두었습니다.</p>
-          ${sourcePullsHTML()}`}
+          ${sourceFilterHTML(marketNews)}${sourcePullsHTML()}`}
         ${error ? `<div class="banner">${esc(error)}</div>` : ""}
         <section class="feed">
           ${loading && news.length === 0 ? skeleton() : ""}
@@ -1193,7 +1226,7 @@ function paintNow(): void {
         </section>
         `}
         <footer class="foot">
-          ${lastFetch ? `뉴스 수집 ${esc(fromNow(lastFetch))}` : ""} · ${tab === "review" ? "1주일 · 1개월 · 1년 정리" : "하루치 보관 · 새 소식만 추가"}
+          ${lastFetch ? `뉴스 수집 ${esc(fromNow(lastFetch))}` : ""} · ${tab === "review" ? "오늘 · 1주일 · 1개월 · 1년 정리" : "언론사 클릭으로 숨김 · 하루치 보관"}
         </footer>
       </main>
       <nav class="mob-nav" aria-label="화면 전환">
@@ -1222,6 +1255,10 @@ function skeleton(): string {
 }
 
 function emptyState(): string {
+  const raw = tab === "market" ? marketNews : stockNews;
+  if (raw.length > 0 && hiddenSources.size > 0 && visibleNews().length === 0) {
+    return `<div class="empty">선택한 언론사를 모두 숨겼습니다.<br>위 언론사를 다시 눌러 뉴스를 보이게 할 수 있습니다.</div>`;
+  }
   if (tab === "mine" && watchlist.length === 0) {
     return `<div class="empty">관심종목을 추가하면 그 종목 뉴스만 모아 보여 줍니다.</div>`;
   }
@@ -1263,6 +1300,14 @@ function bind(): void {
   app.addEventListener("click", (event) => {
     const t = event.target as HTMLElement;
     if (t.closest("[data-add]")?.closest(".suggest, .chips")) return;
+    const sourceBtn = t.closest<HTMLElement>("[data-toggle-source]");
+    if (sourceBtn?.dataset.toggleSource) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleHiddenSource(sourceBtn.dataset.toggleSource);
+      return;
+    }
+
     const home = t.closest<HTMLElement>("[data-home]");
     if (home) {
       tab = "market";
@@ -1289,7 +1334,7 @@ function bind(): void {
       return;
     }
     const spanBtn = t.closest<HTMLElement>("[data-span]");
-    if (spanBtn?.dataset.span === "week" || spanBtn?.dataset.span === "month" || spanBtn?.dataset.span === "year") {
+    if (spanBtn?.dataset.span === "day" || spanBtn?.dataset.span === "week" || spanBtn?.dataset.span === "month" || spanBtn?.dataset.span === "year") {
       reviewRange = spanBtn.dataset.span;
       tab = "review";
       showNewsPane();

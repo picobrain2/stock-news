@@ -446,6 +446,32 @@ body { background: var(--bg); color: var(--text); }
   color: #ff8b8b;
   border-color: #5a2a2a;
 }
+button.pull {
+  cursor: pointer;
+  font: inherit;
+}
+.pull.source-chip.off,
+button.src.off {
+  text-decoration: line-through;
+  opacity: 0.45;
+}
+button.src {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+button.src:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+.source-filters {
+  margin-bottom: 10px;
+}
 
 .banner {
   background: #3a2430;

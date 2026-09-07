@@ -100,7 +100,7 @@ async function main(): Promise<void> {
   const quotesMerged = mergeQuotes(prevQuotes, quotes);
   const indicesMerged = mergeIndices(prevIndices, indices);
   const pullsMerged = mergePulls(prevPulls, fresh.pulls);
-  let reviewBundle = { week: null, month: null, year: null, fetchedAt };
+  let reviewBundle = { day: null, week: null, month: null, year: null, fetchedAt };
   try {
     reviewBundle = await buildReviewBundle();
   } catch (err) {
@@ -133,7 +133,7 @@ async function main(): Promise<void> {
   console.log(`quotes ${quotesMerged.length} symbols, details ${Object.keys(stockDetails).length}`);
   console.log(`indices ${indicesMerged.map((i) => i.name).join(", ") || "none"}`);
   console.log("pulls", pullsMerged.map((p) => `${p.source}:${p.ok ? p.count : "fail"}`).join(", "));
-  console.log(`review week=${reviewBundle.week?.timeline.length ?? 0} month=${reviewBundle.month?.timeline.length ?? 0} year=${reviewBundle.year?.timeline.length ?? 0}`);
+  console.log(`review day=${reviewBundle.day?.timeline.length ?? 0} week=${reviewBundle.week?.timeline.length ?? 0} month=${reviewBundle.month?.timeline.length ?? 0} year=${reviewBundle.year?.timeline.length ?? 0}`);
 }
 
 main().catch((err: unknown) => {

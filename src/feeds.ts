@@ -1,3 +1,4 @@
+import { finnhubCompanyNews, finnhubEnabled, finnhubMarketNews } from "./finnhub";
 import { isGoogleNewsBoilerplate, isGoogleNewsUrl, resolveGoogleNewsUrl } from "./googleNews";
 import { classifyTone, inferRegion, isMarketRelevant, isOffTopicNews, scoreImpact } from "./impact";
 import { INDEX_SPECS, indexSession, resolveSessionAxis, SESSION_BOUNDS, DISPLAY_TZ, mergeIndexQuote, type IndexSpec, type SessionKind } from "./indices";
@@ -445,8 +446,18 @@ export async function getMarketNews(): Promise<{ items: NewsItem[]; pulls: Sourc
         }
       }),
     );
+    let extras: NewsItem[] = [];
+    if (!isBrowser && finnhubEnabled()) {
+      const at = Date.now();
+      try {
+        extras = await finnhubMarketNews();
+        pulls.push({ source: "Finnhub", fetchedAt: at, count: extras.length, ok: extras.length > 0 });
+      } catch {
+        pulls.push({ source: "Finnhub", fetchedAt: at, count: 0, ok: false });
+      }
+    }
     return {
-      items: mergeNews(groups)
+      items: mergeNews([...groups, extras])
         .filter((n) => n.publishedAt <= 0 || Date.now() - n.publishedAt < 86_400_000)
         .slice(0, 120),
       pulls: foldPulls(pulls),
@@ -462,15 +473,40 @@ function afterQuery(from: number): string {
   return `after:${y}-${m}-${day}`;
 }
 
-export async function getPeriodNews(range: ReviewRange): Promise<NewsItem[]> {
-  return cached(`period:${range}`, CACHE_MS, async () => {
-    const { maxAgeMs, from } = rangeWindow(range);
-    const when = afterQuery(from);
-    const feeds = [
+function periodFeedQueries(range: ReviewRange, when: string): Array<{ source: string; url: string }> {
+  if (range === "day") {
+    return [
+      { source: "구글 뉴스", url: googleNews(`when:1d (금리 OR 연준 OR FOMC OR 환율 OR 유가 OR 관세 OR CPI OR 증시)`, "kr") },
+      { source: "구글 뉴스", url: googleNews(`when:1d (코스피 OR 코스닥 OR 반도체 OR 실적 OR 한국은행)`, "kr") },
+      { source: "구글 뉴스", url: googleNews(`when:1d (Fed OR FOMC OR tariff OR CPI OR Nasdaq OR earnings OR inflation)`, "us") },
+    ];
+  }
+  if (range === "week") {
+    return [
       { source: "구글 뉴스", url: googleNews(`${when} (금리 OR 연준 OR FOMC OR 환율 OR 유가 OR 관세 OR CPI)`, "kr") },
       { source: "구글 뉴스", url: googleNews(`${when} (코스피 OR 반도체 OR 실적 OR 한국은행 OR 증시)`, "kr") },
       { source: "구글 뉴스", url: googleNews(`${when} (Fed OR FOMC OR tariff OR CPI OR Nasdaq OR earnings OR inflation)`, "us") },
     ];
+  }
+  if (range === "month") {
+    return [
+      { source: "구글 뉴스", url: googleNews(`${when} (주간 OR 월간 OR 결산 OR 전망 OR 실적시즌 OR 금리결정)`, "kr") },
+      { source: "구글 뉴스", url: googleNews(`${when} (코스피 OR 반도체 OR 수출 OR 환율 OR 유가 OR 한국은행)`, "kr") },
+      { source: "구글 뉴스", url: googleNews(`${when} (monthly OR outlook OR earnings season OR Fed OR inflation OR tariff)`, "us") },
+    ];
+  }
+  return [
+    { source: "구글 뉴스", url: googleNews(`${when} (올해 OR 연간 OR 대선 OR 무역전쟁 OR 금리인하 OR 경기침체 OR 반도체)`, "kr") },
+    { source: "구글 뉴스", url: googleNews(`${when} (코스피 OR 한국은행 OR 환율 OR 수출 OR 부동산 OR 재정)`, "kr") },
+    { source: "구글 뉴스", url: googleNews(`${when} (year OR annual OR recession OR rate cuts OR AI OR tariff war OR election)`, "us") },
+  ];
+}
+
+export async function getPeriodNews(range: ReviewRange): Promise<NewsItem[]> {
+  return cached(`period:${range}`, CACHE_MS, async () => {
+    const { maxAgeMs, from } = rangeWindow(range);
+    const when = afterQuery(from);
+    const feeds = periodFeedQueries(range, when);
     const groups = await settled(
       feeds.map(async (feed) => {
         try {
@@ -480,10 +516,11 @@ export async function getPeriodNews(range: ReviewRange): Promise<NewsItem[]> {
         }
       }),
     );
-    const cap = range === "year" ? 140 : 100;
+    const cap = range === "year" ? 160 : range === "month" ? 120 : range === "week" ? 100 : 80;
+    const minImpact = range === "day" ? 10 : 12;
     return mergeNews(groups, maxAgeMs)
       .filter((n) => !isOffTopicNews(n.title, n.snippet))
-      .filter((n) => n.impact >= 12 || isMarketRelevant(n.title, n.snippet, n.impact))
+      .filter((n) => n.impact >= minImpact || isMarketRelevant(n.title, n.snippet, n.impact))
       .slice(0, cap);
   });
 }
@@ -659,6 +696,10 @@ export async function getStockNews(stocks: StockQuery[], opts?: { light?: boolea
         } catch { /* skip */ }
         if (stock.market === "us") {
           rows.push(...(await yahooTickerNews(stock.yahoo)));
+          if (finnhubEnabled()) {
+            const fh = await finnhubCompanyNews(stock.yahoo, 7);
+            rows.push(...fh.map((n) => ({ ...n, stockIds: [stock.id] })));
+          }
         }
       }
       return rows;

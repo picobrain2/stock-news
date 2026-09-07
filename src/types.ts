@@ -1,7 +1,7 @@
 export type Market = "kr" | "us";
 export type Region = "kr" | "us" | "global";
 export type Tab = "market" | "mine" | "review";
-export type ReviewRange = "week" | "month" | "year";
+export type ReviewRange = "day" | "week" | "month" | "year";
 export type Tone = "up" | "down" | "mixed";
 
 export interface Stock {
@@ -131,6 +131,7 @@ export interface PeriodReview {
 }
 
 export interface ReviewBundle {
+  day: PeriodReview | null;
   week: PeriodReview | null;
   month: PeriodReview | null;
   year: PeriodReview | null;

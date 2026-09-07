@@ -6,3 +6,8 @@ node_modules/
 dist/
 scripts/.prefetch.mjs
 public/data/
+
+# Secrets
+.env
+.env.*
+!.env.example
