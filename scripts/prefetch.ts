@@ -79,6 +79,7 @@ async function main(): Promise<void> {
     [...defaultWatchlist(), ...popularStocks()].map((s) => [s.id, s]),
   ).values()];
   console.log(`prefetch ${stocks.length} stocks`);
+  resetNamuhStats();
   const [prevMarket, prevStocks, prevQuotes, prevPulls, prevIndices, fresh, stockNews, quotes, indices] = await Promise.all([
     readLiveNews("market.json"),
     readLiveNews("stocks.json"),
@@ -87,7 +88,6 @@ async function main(): Promise<void> {
     readLiveIndices(),
     getMarketNews(),
     getStockNews(stocks, { light: true }),
-    resetNamuhStats();
     getQuotes(stocks.map((s) => s.yahoo)),
     getIndexBoard().catch((err: unknown) => {
       console.error("indices failed", err);
